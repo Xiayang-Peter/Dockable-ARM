@@ -108,6 +108,13 @@ public sealed partial class DockItemViewModel : ObservableObject
     /// <summary>Smoothed magnification scale (1 = resting). Plain field; not bound.</summary>
     public double CurrentScale { get; set; } = 1.0;
 
+    /// <summary>Appearance scale (0..1): eases 0→1 as an item is added and 1→0 as it's removed, so the
+    /// dock's width grows/shrinks smoothly instead of jumping. Plain field; driven by the layout engine.</summary>
+    public double AppearScale { get; set; } = 1.0;
+
+    /// <summary>True while the item is animating out; it's removed from the dock once it reaches scale 0.</summary>
+    public bool Departing { get; set; }
+
     // --- Launch bounce (driven per-frame by the layout engine) ---
 
     /// <summary>Window handles seen at the last refresh, to detect a newly-opened window.</summary>
@@ -190,11 +197,13 @@ public sealed partial class DockItemViewModel : ObservableObject
             return;
         }
 
-        if (Model.Kind is not (DockItemKind.Shortcut or DockItemKind.TaskbarApp)
-            || string.IsNullOrWhiteSpace(Model.TargetPath))
+        if (Model.Kind is not (DockItemKind.Shortcut or DockItemKind.TaskbarApp))
             return;
 
-        Icon = await ShortcutService.LoadIconAsync(Model.TargetPath, pixelSize);
+        if (!string.IsNullOrWhiteSpace(Model.TargetPath))
+            Icon = await ShortcutService.LoadIconAsync(Model.TargetPath, pixelSize);
+        else if (Windows.Count > 0)
+            Icon = await ShortcutService.LoadWindowIconAsync(Windows[0]); // no readable exe → the window's own icon
     }
 
     private static string DeriveDisplayName(DockItem model) => model.Kind switch

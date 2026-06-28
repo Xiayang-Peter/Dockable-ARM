@@ -14,7 +14,16 @@
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationIcon>Assets\Dockable.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <!-- App icon: embedded in the exe (ApplicationIcon) and as resources for the tray / window icons. -->
+  <ItemGroup>
+    <None Remove="Assets\Dockable.png" />
+    <None Remove="Assets\Dockable-32.png" />
+    <Resource Include="Assets\Dockable.png" />
+    <Resource Include="Assets\Dockable-32.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />

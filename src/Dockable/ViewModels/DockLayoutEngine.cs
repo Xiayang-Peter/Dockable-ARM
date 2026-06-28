@@ -23,6 +23,7 @@ public sealed class DockLayoutEngine
     private const double TopHeadroom = 10;
 
     private const double Smoothing = 0.35;       // scale easing
+    private const double AppearSmoothing = 0.18;  // add/remove (grow-in / shrink-out) easing
     private const double DragPosSmoothing = 0.28; // position easing while dragging / settling
     private const double DragScale = 1.12;        // the lifted tile is slightly enlarged
     private const double DragLift = 14;           // and raised (deeper) than the row
@@ -33,8 +34,13 @@ public sealed class DockLayoutEngine
     /// <summary>Peak launch-bounce lift as a fraction of the base icon size.</summary>
     private const double BounceLift = 0.5;
 
-    /// <summary>A separator occupies two-fifths of a normal icon cell (along the bar) for an easier click/drag target.</summary>
-    private const double SeparatorFill = 2.0 / 5.0;
+    /// <summary>A separator's layout footprint along the bar, as a fraction of a normal icon cell. Kept
+    /// small so the separator's visible spacing stays proportional to the icons (its clickable area is
+    /// a fixed <see cref="SeparatorHitArea"/> that overhangs the gaps, independent of this).</summary>
+    private const double SeparatorFill = 1.0 / 4.0;
+
+    /// <summary>Fixed clickable/draggable extent of a separator along the bar (DIP), regardless of icon size.</summary>
+    private const double SeparatorHitArea = 36;
 
     private readonly DockViewModel _vm;
 
@@ -184,6 +190,17 @@ public sealed class DockLayoutEngine
             else
                 animating = true;
             items[i].CurrentScale = cur;
+
+            // Appearance scale: ease toward 1 (added) or 0 (removed) so the row's width transitions
+            // smoothly. A growing/shrinking cell pushes neighbours apart / lets them close in.
+            double targetAppear = items[i].Departing ? 0.0 : 1.0;
+            double a = items[i].AppearScale;
+            a += (targetAppear - a) * AppearSmoothing;
+            if (Math.Abs(targetAppear - a) < 0.01)
+                a = targetAppear;
+            else
+                animating = true;
+            items[i].AppearScale = a;
         }
 
         // --- Placed items = everything except the floating dragged tile ---
@@ -198,7 +215,7 @@ public sealed class DockLayoutEngine
 
         double totalAlong = -Gap;
         foreach (var item in placed)
-            totalAlong += BaseCell(item) * item.CurrentScale + Gap;
+            totalAlong += (BaseCell(item) * item.CurrentScale + Gap) * item.AppearScale; // collapses with appear
         if (gapMode)
             totalAlong += _baseSize + Gap; // reserve the dragged tile / drop placeholder
 
@@ -213,11 +230,13 @@ public sealed class DockLayoutEngine
                 along += _baseSize + Gap; // open the gap
 
             var item = placed[j];
-            double cellAlong = BaseCell(item) * item.CurrentScale;  // extent along the bar (narrow for separators)
+            double appear = item.AppearScale;                       // 0..1 grow-in / shrink-out
+            double cellAlong = BaseCell(item) * item.CurrentScale;  // layout footprint along the bar (narrow for separators)
             double cellCross = _baseSize * item.CurrentScale;       // depth cell (always full)
-            double renderAlong = cellAlong * IconFill;
-            double renderCross = cellCross * IconFill; // separators match the non-magnified icon depth
-            double targetMain = along + (cellAlong - renderAlong) / 2; // center the icon within its cell
+            // Separators get a fixed clickable extent that overhangs the gaps; icons fill their cell.
+            double renderAlong = (item.IsSeparator ? SeparatorHitArea : cellAlong * IconFill) * appear;
+            double renderCross = cellCross * IconFill * appear; // separators match the non-magnified icon depth
+            double targetMain = along + (cellAlong * appear - renderAlong) / 2; // center the icon within its (collapsing) cell
 
             double mainPos;
             if (animatePos)
@@ -240,7 +259,7 @@ public sealed class DockLayoutEngine
             nearDepth += item.BounceOffset;
 
             PlaceItem(item, mainPos, renderAlong, renderCross, nearDepth);
-            along += cellAlong + Gap;
+            along += (cellAlong + Gap) * appear; // advance shrinks as the cell collapses
         }
 
         // The dragged tile floats at the cursor, lifted (deeper) and slightly enlarged. The in-canvas

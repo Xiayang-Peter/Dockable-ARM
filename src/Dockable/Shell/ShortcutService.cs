@@ -6,8 +6,10 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Dockable.Models;
 using Windows.Win32;
+using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.UI.Shell;
+using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Dockable.Shell;
 
@@ -65,6 +67,82 @@ public static class ShortcutService
         }
     }
 
+    private const uint WM_GETICON = 0x007F;
+
+    /// <summary>
+    /// The shell display name for a parsing name — e.g. <c>shell:AppsFolder\{aumid}</c> resolves to a
+    /// UWP/Store app's friendly name (like "Settings"). Null if it can't be resolved.
+    /// </summary>
+    public static unsafe string? GetShellDisplayName(string parsingName)
+    {
+        object? shellItem = null;
+        try
+        {
+            Guid iid = typeof(IShellItem).GUID;
+            if (PInvoke.SHCreateItemFromParsingName(parsingName, null!, iid, out shellItem).Failed
+                || shellItem is not IShellItem item)
+                return null;
+
+            item.GetDisplayName(SIGDN.SIGDN_NORMALDISPLAY, out PWSTR name);
+            try { return name.ToString(); }
+            finally { Marshal.FreeCoTaskMem((IntPtr)name.Value); }
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            if (shellItem is not null && Marshal.IsComObject(shellItem))
+                Marshal.ReleaseComObject(shellItem);
+        }
+    }
+
+    /// <summary>
+    /// Extracts a window's own icon (its big/small icon, else its window-class icon) on a background
+    /// thread — the fallback for apps whose executable we can't read (e.g. elevated, like Task Manager).
+    /// </summary>
+    public static Task<ImageSource?> LoadWindowIconAsync(IntPtr hwnd) => Task.Run(() => LoadWindowIcon(hwnd));
+
+    private static ImageSource? LoadWindowIcon(IntPtr hwnd)
+    {
+        try
+        {
+            IntPtr hicon = QueryWindowIcon((HWND)hwnd);
+            if (hicon == IntPtr.Zero)
+                return null;
+            // The HICON is owned by the window/class — don't destroy it; CreateBitmapSourceFromHIcon copies.
+            var source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
+                hicon, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+            source.Freeze();
+            return source;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Dockable] Window icon load failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static unsafe IntPtr QueryWindowIcon(HWND hwnd)
+    {
+        // Prefer the window's big icon, then small, then the class icon. SendMessageTimeout avoids
+        // hanging if the target window isn't pumping messages.
+        nuint result = 0;
+        PInvoke.SendMessageTimeout(hwnd, WM_GETICON, new WPARAM(1 /* ICON_BIG */), new LPARAM(0),
+            SEND_MESSAGE_TIMEOUT_FLAGS.SMTO_ABORTIFHUNG, 250, &result);
+        if (result != 0) return (nint)result;
+
+        result = 0;
+        PInvoke.SendMessageTimeout(hwnd, WM_GETICON, new WPARAM(2 /* ICON_SMALL2 */), new LPARAM(0),
+            SEND_MESSAGE_TIMEOUT_FLAGS.SMTO_ABORTIFHUNG, 250, &result);
+        if (result != 0) return (nint)result;
+
+        nint cls = (nint)PInvoke.GetClassLongPtr(hwnd, GET_CLASS_LONG_INDEX.GCLP_HICON);
+        if (cls != 0) return cls;
+        return (nint)PInvoke.GetClassLongPtr(hwnd, GET_CLASS_LONG_INDEX.GCLP_HICONSM);
+    }
+
     /// <summary>Opens an Explorer window at the file's folder with the file itself selected.</summary>
     public static void RevealInExplorer(string path)
     {
@@ -111,6 +189,17 @@ public static class ShortcutService
             // Fall through to the default shell extraction (a blank page beats nothing).
         }
 
+        // Executables carry their icon in the PE resource. Extract it directly (deterministic, full-res)
+        // instead of via the shell image factory, whose async cache occasionally returns a tiny low-res
+        // placeholder for some apps (e.g. Cursor) — crisp on one run, favicon-sized in a square the next.
+        if (path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            var fromExe = ExtractIconAtIndex(path, 0, pixelSize);
+            if (fromExe is not null)
+                return fromExe;
+            // Fall through to the shell factory if the exe has no extractable icon resource.
+        }
+
         object? shellItem = null;
         try
         {
@@ -119,11 +208,19 @@ public static class ShortcutService
             if (hr.Failed || shellItem is not IShellItemImageFactory factory)
                 return null;
 
+            // UWP/Store tile images (AppsFolder) come back vertically flipped vs file icons.
+            bool flipVertical = path.StartsWith("shell:AppsFolder", StringComparison.OrdinalIgnoreCase);
+
             var size = new Windows.Win32.Foundation.SIZE(pixelSize, pixelSize);
 
             // RESIZETOFIT + BIGGERSIZEOK lets the shell hand back the largest available
             // asset (up to 256px) and scale to fit, giving crisp results on HiDPI.
-            const SIIGBF flags = SIIGBF.SIIGBF_RESIZETOFIT | SIIGBF.SIIGBF_BIGGERSIZEOK;
+            SIIGBF flags = SIIGBF.SIIGBF_RESIZETOFIT | SIIGBF.SIIGBF_BIGGERSIZEOK;
+
+            // For UWP/Store apps, force the icon (logo) representation. Without this the shell may return
+            // a "plated" thumbnail with a light square background baked behind the logo (e.g. Settings).
+            if (flipVertical)
+                flags |= SIIGBF.SIIGBF_ICONONLY;
 
             // For uncached items the shell extracts the image asynchronously and the first
             // call returns E_PENDING. Poll briefly until the image becomes available.
@@ -142,7 +239,7 @@ public static class ShortcutService
 
                 try
                 {
-                    return ConvertHBitmap(hbmp);
+                    return ConvertHBitmap(hbmp, flipVertical);
                 }
                 finally
                 {
@@ -235,7 +332,7 @@ public static class ShortcutService
     /// Copies a 32bpp DIB (as produced by GetImage, premultiplied BGRA) into a frozen
     /// WriteableBitmap, preserving the alpha channel and handling row orientation.
     /// </summary>
-    private static unsafe ImageSource? ConvertHBitmap(HBITMAP hbmp)
+    private static unsafe ImageSource? ConvertHBitmap(HBITMAP hbmp, bool flipVertical = false)
     {
         DIBSECTION ds = default;
         int written = PInvoke.GetObject((HGDIOBJ)(void*)hbmp, sizeof(DIBSECTION), &ds);
@@ -252,9 +349,11 @@ public static class ShortcutService
         byte[] buffer = new byte[byteCount];
         Marshal.Copy((IntPtr)ds.dsBm.bmBits, buffer, 0, byteCount);
 
-        // A negative biHeight means the DIB is top-down (the common case for GetImage).
-        // A positive biHeight is bottom-up and must be flipped row-by-row.
-        if (ds.dsBmih.biHeight > 0)
+        // A negative biHeight means the DIB is top-down (the common case for GetImage); a positive
+        // biHeight is bottom-up and must be flipped row-by-row. Some shell sources (notably UWP/Store
+        // AppsFolder tile images) report orientation inconsistently and come out upside down, so
+        // flipVertical inverts the decision for those.
+        if ((ds.dsBmih.biHeight > 0) ^ flipVertical)
             FlipRowsInPlace(buffer, stride, height);
 
         var bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Pbgra32, null);

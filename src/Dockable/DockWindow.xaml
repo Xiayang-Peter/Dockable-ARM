@@ -16,7 +16,8 @@
         AllowDrop="True"
         DragOver="OnDragOver"
         DragLeave="OnDragLeave"
-        Drop="OnDrop">
+        Drop="OnDrop"
+        MouseRightButtonUp="Dock_RightClick">
 
     <Window.Resources>
         <conv:BoolToVisibilityConverter x:Key="BoolToVis" />
@@ -25,16 +26,16 @@
         <conv:AllTrueToVisibilityConverter x:Key="AllTrueToVis" />
 
         <!-- Theme brushes (light defaults; ApplyTheme() swaps these at runtime for light/dark). -->
-        <SolidColorBrush x:Key="BarBackgroundBrush" Color="#66FFFFFF" />
-        <SolidColorBrush x:Key="BarBorderBrush" Color="#33FFFFFF" />
+        <SolidColorBrush x:Key="BarBackgroundBrush" Color="#33FFFFFF" />
+        <SolidColorBrush x:Key="BarBorderBrush" Color="#66FFFFFF" />
         <SolidColorBrush x:Key="SeparatorBrush" Color="#33000000" />
         <SolidColorBrush x:Key="RunningDotBrush" Color="#B3000000" />
         <SolidColorBrush x:Key="FallbackBgBrush" Color="#1F000000" />
         <SolidColorBrush x:Key="FallbackTextBrush" Color="#CC000000" />
 
-        <!-- Icon drop-shadow opacities (light defaults; more pronounced than dark). ApplyTheme() swaps. -->
-        <sys:Double x:Key="IconShadowOuterOpacity">0.24</sys:Double>
-        <sys:Double x:Key="IconShadowInnerOpacity">0.32</sys:Double>
+        <!-- Icon drop-shadow opacities (light defaults; subtle). ApplyTheme() swaps per theme. -->
+        <sys:Double x:Key="IconShadowOuterOpacity">0.10</sys:Double>
+        <sys:Double x:Key="IconShadowInnerOpacity">0.14</sys:Double>
 
         <!-- One dock entry: Start logo for the Start item, otherwise an extracted icon.
              The container is sized/positioned by the layout engine (Width/Height/Canvas.Left/Top). -->
@@ -47,9 +48,9 @@
                   MouseEnter="DockItem_MouseEnter">
                 <Grid.Style>
                     <Style TargetType="Grid">
-                        <!-- Separators show a resize cursor (drag them to resize the dock): up/down for a
-                             horizontal dock, left/right for a vertical (left/right) dock. -->
-                        <Setter Property="Cursor" Value="Hand" />
+                        <!-- Launcher icons use the regular arrow pointer (they're not links). Separators
+                             show a resize cursor: up/down for a horizontal dock, left/right for a vertical one. -->
+                        <Setter Property="Cursor" Value="Arrow" />
                         <Style.Triggers>
                             <MultiDataTrigger>
                                 <MultiDataTrigger.Conditions>
@@ -69,20 +70,15 @@
                     </Style>
                 </Grid.Style>
 
-                <!-- Windows Start logo: four tiles -->
+                <!-- Windows Start logo: four tiles, with a more pronounced drop shadow than the icons. -->
                 <Viewbox Visibility="{Binding IsStartMenu, Converter={StaticResource BoolToVis}}">
-                    <Grid Width="20" Height="20">
-                        <Grid.RowDefinitions>
-                            <RowDefinition /><RowDefinition />
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition /><ColumnDefinition />
-                        </Grid.ColumnDefinitions>
-                        <Rectangle Grid.Row="0" Grid.Column="0" Fill="#FF50B0F0" Margin="0,0,1.2,1.2" />
-                        <Rectangle Grid.Row="0" Grid.Column="1" Fill="#FF50B0F0" Margin="1.2,0,0,1.2" />
-                        <Rectangle Grid.Row="1" Grid.Column="0" Fill="#FF50B0F0" Margin="0,1.2,1.2,0" />
-                        <Rectangle Grid.Row="1" Grid.Column="1" Fill="#FF50B0F0" Margin="1.2,1.2,0,0" />
-                    </Grid>
+                    <Viewbox.Effect>
+                        <DropShadowEffect BlurRadius="12" ShadowDepth="2" Direction="270" Opacity="0.3" Color="#000000" />
+                    </Viewbox.Effect>
+                    <!-- Windows 11 logo, traced from Windows11.svg (viewBox 4875): four 2311-wide tiles
+                         with a 253-unit gap (≈5.2%) and no outer margin. Fill keeps the dock's blue. -->
+                    <Path Fill="#FF50B0F0"
+                          Data="M0,0 H2311 V2310 H0 Z M2564,0 H4875 V2310 H2564 Z M0,2564 H2311 V4875 H0 Z M2564,2564 H4875 V4875 H2564 Z" />
                 </Viewbox>
 
                 <!-- Separator divider: a 2px line across the bar — vertical on a horizontal dock,

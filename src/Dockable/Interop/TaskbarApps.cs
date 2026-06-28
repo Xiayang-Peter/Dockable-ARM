@@ -132,6 +132,22 @@ public static class TaskbarApps
         });
     }
 
+    /// <summary>
+    /// If <paramref name="path"/> is a .lnk whose target is a real file, returns that target (the
+    /// shortcut's actual destination); otherwise returns the path unchanged (non-.lnk paths, or
+    /// shortcuts that don't resolve to a file such as UWP/store pins).
+    /// </summary>
+    public static string ResolveToTarget(string path)
+    {
+        if (!string.IsNullOrWhiteSpace(path) && path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
+        {
+            string? target = ResolveLinkTarget(path);
+            if (!string.IsNullOrWhiteSpace(target) && File.Exists(target))
+                return target;
+        }
+        return path;
+    }
+
     /// <summary>Enumerates the windows that would appear as taskbar buttons.</summary>
     public static IReadOnlyList<RunningWindow> EnumerateAppWindows(uint ownProcessId)
     {
@@ -172,13 +188,16 @@ public static class TaskbarApps
         if (pid == 0 || pid == ownProcessId)
             return false;
 
+        // The exe may be empty for elevated/protected processes (e.g. Task Manager) we can't read —
+        // that's fine; identity then comes from the window's AUMID or its own icon/title, like the taskbar.
         exePath = GetProcessPath(pid);
-        if (string.IsNullOrEmpty(exePath))
-            return false;
-
         title = GetWindowTitle(hwnd);
         return true;
     }
+
+    /// <summary>True for a packaged (UWP/Store) app's AppUserModelID (the <c>PackageFamily!AppId</c> form).</summary>
+    public static bool IsPackagedAumid(string? aumid)
+        => !string.IsNullOrEmpty(aumid) && aumid.Contains('!');
 
     /// <summary>The window's explicit AppUserModelID, or empty (many windows don't set one).</summary>
     public static unsafe string GetWindowAumid(IntPtr hwnd)

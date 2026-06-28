@@ -8,6 +8,8 @@ VIRTUAL_KEY
 // returns a crisp HBITMAP we convert to a WPF BitmapSource.
 SHCreateItemFromParsingName
 IShellItemImageFactory
+IShellItem
+SIGDN
 SIIGBF
 DeleteObject
 GetObject
@@ -119,3 +121,22 @@ WINDOWPLACEMENT
 
 // --- Quit / Force Quit an app from its context menu ---
 PostMessage
+
+// --- Fall back to a window's own icon for apps whose exe we can't read (e.g. elevated like Task Manager) ---
+GetClassLongPtr
+GET_CLASS_LONG_INDEX
+SendMessageTimeout
+SEND_MESSAGE_TIMEOUT_FLAGS
+
+// --- Clear the dock for full-screen apps / borderless-fullscreen games ---
+GetDesktopWindow
+GetShellWindow
+
+// --- Acrylic backdrop window (Windows.UI.Composition host) ---
+CreateWindowEx
+RegisterClassEx
+DefWindowProc
+DestroyWindow
+GetModuleHandle
+WNDCLASSEXW
+WINDOW_STYLE

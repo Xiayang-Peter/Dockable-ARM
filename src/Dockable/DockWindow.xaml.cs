@@ -17,6 +17,7 @@ using Dockable.ViewModels;
 using H.NotifyIcon;
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Dockable;
@@ -41,6 +42,7 @@ public partial class DockWindow : Window
     private double _mouseY;
     private bool _hovering;
     private bool _renderingHooked;
+    private bool _finalizeScheduled; // a deferred FinalizeDeparted is queued (avoid mutating Items mid-render)
 
     // Shared hover label: the item currently under the cursor, plus the measured label content.
     private const double LabelGap = 4; // gap above a fully-magnified icon
@@ -63,6 +65,13 @@ public partial class DockWindow : Window
     private readonly MinimizeHook _minimizeHook = new();
     // Full-window captures taken while windows are visible (capture-at-minimize is too late).
     private readonly WindowThumbnailCache _thumbnails = new();
+    // Live acrylic blur rendered in a separate window directly behind the bar.
+    private readonly AcrylicBackdrop _acrylic = new();
+    private const double BarCornerRadius = 24; // matches DockBackground's CornerRadius
+
+    // Hide the dock entirely while a full-screen app / borderless-fullscreen game owns the screen.
+    private readonly ForegroundWatcher _foreground = new();
+    private bool _fullscreenActive;
     // Windows whose minimize/restore we're currently animating (ignore re-entrant events).
     private readonly HashSet<IntPtr> _busy = new();
     // Windows minimized "into" their app icon (no thumbnail tile): hwnd → its capture for restore.
@@ -72,6 +81,8 @@ public partial class DockWindow : Window
     private readonly uint _ownProcessId = (uint)Environment.ProcessId;
     private readonly DispatcherTimer _appRefreshTimer;
     private FileSystemWatcher? _pinWatcher;
+    private readonly DispatcherTimer _pinCheckTimer; // debounces taskbar-pin checks after folder changes
+    private bool _promptOpen;                          // guards against overlapping prompt dialogs
 
     // While the Start menu (opened from the dock) is up, the taskbar is fully hidden; this watches
     // for it closing so we can restore the configured taskbar state.
@@ -110,7 +121,12 @@ public partial class DockWindow : Window
         MouseLeftButtonUp += OnDockMouseUp; // ends a custom drag (no-op for normal clicks)
 
         _appRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _appRefreshTimer.Tick += (_, _) => RefreshTaskbarApps();
+        _appRefreshTimer.Tick += (_, _) =>
+        {
+            RefreshTaskbarApps();
+            UpdateFullscreenState(); // backstop in case a fullscreen transition didn't raise an event
+            CheckAndPromptNewPins(); // reliable poll for new taskbar pins (the folder watcher often doesn't fire on Win11)
+        };
 
         _dragSteadyTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(DragSteadyMs) };
         _dragSteadyTimer.Tick += OnDragSteadyElapsed;
@@ -118,6 +134,9 @@ public partial class DockWindow : Window
 
         _startWatchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         _startWatchTimer.Tick += OnStartWatchTick;
+
+        _pinCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
+        _pinCheckTimer.Tick += (_, _) => { _pinCheckTimer.Stop(); CheckAndPromptNewPins(); };
     }
 
     private DockViewModel? ViewModel => DataContext as DockViewModel;
@@ -169,21 +188,21 @@ public partial class DockWindow : Window
             Resources["IconShadowOuterOpacity"] = 0.12;
             Resources["IconShadowInnerOpacity"] = 0.18;
             BarShadow.Opacity = 0.4;
-            DockBackground.BorderThickness = new Thickness(1);
+            DockBackground.BorderThickness = new Thickness(1.5);
         }
         else
         {
-            // .macos-dock-light
-            Resources["BarBackgroundBrush"] = Brush("#66FFFFFF");
-            Resources["BarBorderBrush"] = Brush("#33FFFFFF");
+            // .macos-dock-light (background/border swapped from the original tints)
+            Resources["BarBackgroundBrush"] = Brush("#33FFFFFF");
+            Resources["BarBorderBrush"] = Brush("#66FFFFFF");
             Resources["SeparatorBrush"] = Brush("#33000000");
             Resources["RunningDotBrush"] = Brush("#B3000000"); // rgba(0,0,0,0.7)
             Resources["FallbackBgBrush"] = Brush("#1F000000");
             Resources["FallbackTextBrush"] = Brush("#CC000000");
-            Resources["IconShadowOuterOpacity"] = 0.24; // more pronounced icon shadows on light glass
-            Resources["IconShadowInnerOpacity"] = 0.32;
+            Resources["IconShadowOuterOpacity"] = 0.10; // subtle icon shadows on light glass
+            Resources["IconShadowInnerOpacity"] = 0.14;
             BarShadow.Opacity = 0.15;
-            DockBackground.BorderThickness = new Thickness(2); // thicker border reads better on light glass
+            DockBackground.BorderThickness = new Thickness(1.5); // slightly thicker border on light glass
         }
     }
 
@@ -240,6 +259,20 @@ public partial class DockWindow : Window
         _minimizeHook.WindowMinimizing += OnWindowMinimizing;
         _minimizeHook.Start();
 
+        _foreground.ForegroundChanged += OnForegroundChanged;
+        _foreground.Start();
+
+        // Live acrylic blur behind the bar, in its own window just below the dock.
+        try
+        {
+            _acrylic.Initialize();
+            ApplyGlassEffect();
+        }
+        catch
+        {
+            // Acrylic is a nicety; never let its setup block the dock from showing.
+        }
+
         ApplyBehavior();
     }
 
@@ -249,6 +282,13 @@ public partial class DockWindow : Window
         ApplyWindowSize();
         ApplyTaskbarVisibility();
         StartTaskbarMirror();
+
+        // After the dock is up, run the one-time startup prompts (defer so the dock renders first).
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+        {
+            PromptAddToStartupIfNeeded();
+            CheckAndPromptNewPins();
+        });
     }
 
     // --- Taskbar mirror: live pinned + running apps ---
@@ -265,10 +305,22 @@ public partial class DockWindow : Window
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite,
                 EnableRaisingEvents = true,
             };
-            FileSystemEventHandler onChange = (_, _) => Dispatcher.BeginInvoke(() => RefreshTaskbarApps());
-            _pinWatcher.Created += onChange;
-            _pinWatcher.Deleted += onChange;
-            _pinWatcher.Renamed += (_, _) => Dispatcher.BeginInvoke(() => RefreshTaskbarApps());
+            // A new pin (created/renamed .lnk) also triggers a debounced check to offer replication.
+            FileSystemEventHandler refresh = (_, _) => Dispatcher.BeginInvoke(() => RefreshTaskbarApps());
+            FileSystemEventHandler refreshAndCheck = (_, _) => Dispatcher.BeginInvoke(() =>
+            {
+                RefreshTaskbarApps();
+                _pinCheckTimer.Stop();
+                _pinCheckTimer.Start(); // debounce: let the taskband registry catch up before checking
+            });
+            _pinWatcher.Created += refreshAndCheck;
+            _pinWatcher.Deleted += refresh;
+            _pinWatcher.Renamed += (_, _) => Dispatcher.BeginInvoke(() =>
+            {
+                RefreshTaskbarApps();
+                _pinCheckTimer.Stop();
+                _pinCheckTimer.Start();
+            });
         }
         catch
         {
@@ -277,6 +329,77 @@ public partial class DockWindow : Window
     }
 
     private void RefreshTaskbarApps() => ViewModel?.RefreshTaskbarApps(_ownProcessId);
+
+    /// <summary>If new shortcuts have been pinned to the taskbar, offer to replicate them on the dock.</summary>
+    private void CheckAndPromptNewPins()
+    {
+        if (ViewModel is null || _promptOpen || !ViewModel.Settings.AskReplicateTaskbarPins)
+            return;
+        var newPins = ViewModel.FindNewTaskbarPins();
+        if (newPins.Count == 0)
+            return;
+
+        _promptOpen = true;
+        try
+        {
+            string what = newPins.Count > 1 ? "shortcuts have" : "shortcut has";
+            var dialog = new ConfirmDialog($"New {what} been pinned to the taskbar. Would you like to replicate "
+                + (newPins.Count > 1 ? "them" : "it") + " on the Dock?") { Owner = this };
+            bool replicate = dialog.ShowDialog() == true;
+
+            if (dialog.DoNotAskAgain)
+                ViewModel.Settings.AskReplicateTaskbarPins = false;
+
+            if (replicate)
+            {
+                ViewModel.ReplicateTaskbarPins(newPins); // pins + remembers (saves)
+                RefreshTaskbarApps();
+            }
+            else
+            {
+                ViewModel.RememberTaskbarPins(newPins); // don't offer these again (saves)
+            }
+            ViewModel.Save();
+        }
+        finally
+        {
+            _promptOpen = false;
+        }
+    }
+
+    /// <summary>Offers (once) to add Dockable to the Windows startup sequence, unless already there.</summary>
+    private void PromptAddToStartupIfNeeded()
+    {
+        if (ViewModel is null || _promptOpen || !ViewModel.Settings.AskAddToStartup)
+            return;
+        if (StartupManager.IsEnabled(DockableStartupName)) // already runs at login
+            return;
+
+        _promptOpen = true;
+        try
+        {
+            var dialog = new ConfirmDialog("Would you like to add Dockable to startup?") { Owner = this };
+            bool add = dialog.ShowDialog() == true;
+            if (add)
+            {
+                string exe = Environment.ProcessPath ?? string.Empty;
+                if (!string.IsNullOrEmpty(exe))
+                    StartupManager.Enable(DockableStartupName, exe);
+                ViewModel.Settings.AskAddToStartup = false; // answered; and IsEnabled will short-circuit anyway
+            }
+            else if (dialog.DoNotAskAgain)
+            {
+                ViewModel.Settings.AskAddToStartup = false;
+            }
+            ViewModel.Save();
+        }
+        finally
+        {
+            _promptOpen = false;
+        }
+    }
+
+    private const string DockableStartupName = "Dockable"; // HKCU Run-key value name (matches Dock Preferences)
 
     /// <summary>Click a taskbar app: focus its windows if running, otherwise launch it. Minimized
     /// windows (in a thumbnail tile or into this icon) restore with the animation, one after another
@@ -318,6 +441,80 @@ public partial class DockWindow : Window
         RestoreWindowAnimated(hwnd, tile, target, bitmap, () => RestoreNext(app, queue, index + 1));
     }
 
+    private void OnForegroundChanged()
+    {
+        UpdateFullscreenState();
+        if (StartMenu.IsOpen())
+            RaiseDockAboveStartMenu(); // Start menu just came forward — keep the dock above it
+    }
+
+    /// <summary>Re-asserts the dock at the top of the topmost band (without stealing focus) so the
+    /// Windows Start menu appears behind it. Re-seats the acrylic backdrop just beneath the dock.</summary>
+    private void RaiseDockAboveStartMenu()
+    {
+        if (_hwnd == IntPtr.Zero)
+            return;
+        PInvoke.SetWindowPos((HWND)_hwnd, new HWND(-1) /* HWND_TOPMOST */, 0, 0, 0, 0,
+            SET_WINDOW_POS_FLAGS.SWP_NOMOVE | SET_WINDOW_POS_FLAGS.SWP_NOSIZE | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
+        SyncAcrylic();
+    }
+
+    /// <summary>
+    /// Hides the whole dock (and its acrylic backdrop) while a full-screen app or borderless-fullscreen
+    /// game owns the dock's monitor, and restores it when that window goes away — so the dock never
+    /// competes with full-screen content.
+    /// </summary>
+    private void UpdateFullscreenState()
+    {
+        bool fullscreen = IsForegroundFullscreenOnDockMonitor();
+        if (fullscreen == _fullscreenActive)
+            return;
+        _fullscreenActive = fullscreen;
+
+        if (fullscreen)
+        {
+            Hide();
+            _acrylic.Hide();
+        }
+        else
+        {
+            Show();
+            PositionDock();
+            ApplyGlassEffect();
+        }
+    }
+
+    /// <summary>True when the foreground window covers the dock's monitor (full-screen), excluding the
+    /// desktop/shell and our own windows.</summary>
+    private unsafe bool IsForegroundFullscreenOnDockMonitor()
+    {
+        if (_hwnd == IntPtr.Zero)
+            return false;
+
+        HWND fg = PInvoke.GetForegroundWindow();
+        if (fg.IsNull || fg == (HWND)_hwnd || fg == PInvoke.GetDesktopWindow() || fg == PInvoke.GetShellWindow())
+            return false;
+
+        uint pid = 0;
+        PInvoke.GetWindowThreadProcessId(fg, &pid);
+        if (pid == _ownProcessId) // our backdrop / overlays / popups
+            return false;
+
+        // Only clear the way if the full-screen window is on the dock's own monitor.
+        var fgMon = PInvoke.MonitorFromWindow(fg, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
+        var dockMon = PInvoke.MonitorFromWindow((HWND)_hwnd, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
+        if (fgMon != dockMon)
+            return false;
+
+        if (!PInvoke.GetWindowRect(fg, out RECT r))
+            return false;
+        var mi = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
+        if (!PInvoke.GetMonitorInfo(fgMon, ref mi))
+            return false;
+        var m = mi.rcMonitor;
+        return r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom;
+    }
+
     private void ApplyTaskbarVisibility()
     {
         if (ViewModel is null)
@@ -334,6 +531,46 @@ public partial class DockWindow : Window
         var (left, top) = ComputePlacement();
         Left = left;
         Top = top;
+        SyncAcrylic();
+    }
+
+    /// <summary>Shows/hides and configures the acrylic backdrop for the selected Glass Effect: Simple
+    /// hides it (the bar keeps its plain translucent brush); Acrylic/Liquid Glass show it with the
+    /// matching backdrop brush.</summary>
+    private void ApplyGlassEffect()
+    {
+        var mode = ViewModel?.Settings.GlassEffect ?? GlassEffect.Acrylic;
+        if (mode == GlassEffect.Simple)
+        {
+            _acrylic.Hide();
+            return;
+        }
+        _acrylic.SetEffect(mode);
+        _acrylic.Show();
+        SyncAcrylic();
+    }
+
+    private void SetGlassEffect(GlassEffect mode)
+    {
+        if (ViewModel is null || ViewModel.Settings.GlassEffect == mode)
+            return;
+        ViewModel.Settings.GlassEffect = mode;
+        ViewModel.Save();
+        ApplyGlassEffect();
+    }
+
+    /// <summary>Tracks the acrylic backdrop window to the bar's current screen rect (physical px) and
+    /// keeps it z-ordered just below the dock. Called whenever the bar moves or resizes.</summary>
+    private void SyncAcrylic()
+    {
+        if (ViewModel is null || _hwnd == IntPtr.Zero || ViewModel.BarWidth <= 0 || ViewModel.BarHeight <= 0)
+            return;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var topLeft = PointToScreen(new Point(ViewModel.BarLeft, ViewModel.BarTop)); // device pixels
+        int w = (int)Math.Round(ViewModel.BarWidth * dpi.DpiScaleX);
+        int h = (int)Math.Round(ViewModel.BarHeight * dpi.DpiScaleY);
+        float corner = (float)(BarCornerRadius * dpi.DpiScaleX);
+        _acrylic.SetBounds((int)Math.Round(topLeft.X), (int)Math.Round(topLeft.Y), w, h, corner, _hwnd);
     }
 
     private (double Left, double Top) ComputePlacement()
@@ -595,7 +832,7 @@ public partial class DockWindow : Window
             else if (removable && overDock)
                 ViewModel.MovePin(item.LaunchPath, ViewModel.DragInsertIndex);  // reorder pins
             else if (unpinnedApp && overDock)
-                ViewModel.PinApp(item.LaunchPath, ViewModel.DragInsertIndex);   // pin a running app where dropped
+                ViewModel.PinApp(item.LaunchPath, ViewModel.DragInsertIndex, item.DisplayName); // pin a running app where dropped (keep its open name)
             // Otherwise (minimized window, or dropped away): no change → snaps back.
 
             ViewModel.EndItemDrag();    // the in-canvas tile reappears and settles to its slot
@@ -760,6 +997,7 @@ public partial class DockWindow : Window
                     handled = true;
                     break;
                 case PInvoke.ABN_FULLSCREENAPP:
+                    UpdateFullscreenState(); // a full-screen app opened/closed — clear or restore the dock
                     handled = true;
                     break;
             }
@@ -822,41 +1060,26 @@ public partial class DockWindow : Window
         // to a thumbnail tile (resolved in the deferred step below).
         var appTile = ViewModel.Settings.MinimizeIntoIcon ? ViewModel.FindAppForWindow(hwnd) : null;
 
-        // The minimize-start event only reaches us AFTER the OS has already minimized the window —
-        // it can't be intercepted earlier without injecting a hook into every other process. So undo
-        // the minimize immediately (instant: transitions are suppressed) and keep the real window on
-        // screen as the animation's frame 0. We minimize it exactly once — behind the overlay, when
-        // the warp is ready — so the spot is never empty (no "blink").
-        bool wasMinimized = WindowControl.IsIconic(hwnd);
-        if (wasMinimized)
-            WindowControl.ShowNoActivate(hwnd);
-
-        // Bring the overlay up now (same image, same spot) so it paints in this render pass while the
-        // real window still fills the spot underneath it.
+        // The minimize-start event reaches us only AFTER the OS has already minimized the window, and
+        // transitions are suppressed, so it vanished instantly (no OS scale animation). Don't restore
+        // it — just paint the captured frame at the window's old spot and warp it into the dock right
+        // away: a single minimize, no restore/re-minimize dance.
         animator.ShowAtSource(bitmap, sourceDip, monitorDip);
 
-        // After that render pass the overlay covers the spot, so we can minimize the real window
-        // behind it and start the warp — a single, seamless handoff.
-        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        Point target;
+        if (appTile is not null)
         {
-            if (wasMinimized)
-                WindowControl.MinimizeNoActivate(hwnd);
-
-            Point target;
-            if (appTile is not null)
-            {
-                // Into the app icon: remember the capture so the icon click can warp it back out.
-                _iconMinimized[hwnd] = bitmap;
-                target = TileScreenCenter(appTile);
-            }
-            else
-            {
-                var tile = ViewModel.AddMinimizedWindow(hwnd, bitmap, TaskbarApps.GetWindowTitle(hwnd));
-                LoadOverlayIcon(tile, hwnd);
-                target = TileScreenCenter(tile);
-            }
-            animator.AnimateTo(target, reverse: false, onCompleted: () => _busy.Remove(hwnd));
-        });
+            // Into the app icon: remember the capture so the icon click can warp it back out.
+            _iconMinimized[hwnd] = bitmap;
+            target = TileScreenCenter(appTile);
+        }
+        else
+        {
+            var tile = ViewModel.AddMinimizedWindow(hwnd, bitmap, TaskbarApps.GetWindowTitle(hwnd));
+            LoadOverlayIcon(tile, hwnd);
+            target = TileScreenCenter(tile);
+        }
+        animator.AnimateTo(target, reverse: false, onCompleted: () => _busy.Remove(hwnd));
     }
 
     /// <summary>Loads the app icon for a minimized tile and badges it onto the thumbnail.</summary>
@@ -942,7 +1165,20 @@ public partial class DockWindow : Window
         // Suppress magnification while resizing via a separator (icons stay at the new resting size).
         double mouseMain = IsVerticalDock ? _mouseY : _mouseX;
         bool animating = ViewModel?.UpdateMagnification(mouseMain, _hovering && !_separatorResize) ?? false;
+        SyncAcrylic();      // track the acrylic backdrop to the (magnifying) bar each frame
         UpdateHoverLabel(); // track the hovered icon's live center each frame
+
+        // A shrunk-out (departed) item is removed off the render pass to avoid mutating Items mid-frame.
+        if (ViewModel?.HasFinishedDeparting == true && !_finalizeScheduled)
+        {
+            _finalizeScheduled = true;
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+            {
+                _finalizeScheduled = false;
+                ViewModel?.FinalizeDeparted();
+            });
+        }
+
         if (!animating && !_hovering)
         {
             UnhookRendering();
@@ -1100,7 +1336,8 @@ public partial class DockWindow : Window
         _startWatchTicks++;
         if (StartMenu.IsOpen())
         {
-            _startSeen = true; // Start is up — keep the taskbar hidden
+            _startSeen = true;            // Start is up — keep the taskbar hidden
+            RaiseDockAboveStartMenu();    // ...and keep the dock in front, so Start sits behind it
             return;
         }
 
@@ -1120,6 +1357,10 @@ public partial class DockWindow : Window
         if (sender is not FrameworkElement { DataContext: DockItemViewModel item } target || ViewModel is null)
             return;
 
+        // Consume the right-click on the item so it doesn't fall through to the empty-space dock menu
+        // (items without their own menu — Start / Recycle Bin / minimized tiles — simply show nothing).
+        e.Handled = true;
+
         ContextMenu? menu = item switch
         {
             { IsTaskbarApp: true } => BuildAppMenu(item),
@@ -1130,6 +1371,17 @@ public partial class DockWindow : Window
             return;
 
         menu.PlacementTarget = target;
+        menu.Placement = PlacementMode.MousePoint;
+        menu.IsOpen = true;
+    }
+
+    // Right-clicking empty space inside the dock (the bar background) shows the dock-wide menu.
+    private void Dock_RightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (ViewModel is null)
+            return;
+        var menu = BuildSeparatorMenu();
+        menu.PlacementTarget = this;
         menu.Placement = PlacementMode.MousePoint;
         menu.IsOpen = true;
         e.Handled = true;
@@ -1143,7 +1395,7 @@ public partial class DockWindow : Window
         prefs.Click += (_, _) => OpenDockPreferences();
         menu.Items.Add(prefs);
         menu.Items.Add(new Separator());
-        var exit = new MenuItem { Header = "Exit" };
+        var exit = new MenuItem { Header = "Quit Dockable" };
         exit.Click += (_, _) => Application.Current.Shutdown();
         menu.Items.Add(exit);
         return menu;
@@ -1159,6 +1411,15 @@ public partial class DockWindow : Window
         var newWindow = new MenuItem { Header = "New Window" };
         newWindow.Click += (_, _) => ShortcutService.Launch(app.LaunchPath);
         menu.Items.Add(newWindow);
+
+        // Rename: change a pinned shortcut's display label (persisted via PinNames).
+        if (app.IsPinned)
+        {
+            var rename = new MenuItem { Header = "Rename" };
+            rename.Click += (_, _) => RenamePin(app);
+            menu.Items.Add(rename);
+        }
+
         menu.Items.Add(new Separator());
 
         var options = new MenuItem { Header = "Options" };
@@ -1169,7 +1430,7 @@ public partial class DockWindow : Window
             if (app.IsPinned)
                 ViewModel!.UnpinApp(app.LaunchPath);
             else
-                ViewModel!.PinApp(app.LaunchPath, int.MaxValue); // append to the pinned list
+                ViewModel!.PinApp(app.LaunchPath, int.MaxValue, app.DisplayName); // append to the pinned list (keep its name)
             RefreshTaskbarApps();
         };
         options.Items.Add(keep);
@@ -1212,6 +1473,14 @@ public partial class DockWindow : Window
         }
 
         return menu;
+    }
+
+    /// <summary>Prompts for a new display label for a pinned shortcut and applies it.</summary>
+    private void RenamePin(DockItemViewModel app)
+    {
+        var dialog = new InputDialog("Rename this shortcut:", app.DisplayName) { Owner = this };
+        if (dialog.ShowDialog() == true)
+            ViewModel?.RenamePin(app.LaunchPath, dialog.Value);
     }
 
     private static bool AltHeld => (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
@@ -1279,7 +1548,7 @@ public partial class DockWindow : Window
             return;
         }
 
-        _settingsWindow = new SettingsWindow(ViewModel, SetTheme, SetEdge, SetHideTaskbar);
+        _settingsWindow = new SettingsWindow(ViewModel, SetTheme, SetEdge, SetHideTaskbar, SetGlassEffect);
         _settingsWindow.Closed += (_, _) => _settingsWindow = null;
         _settingsWindow.Show();
     }
@@ -1336,7 +1605,8 @@ public partial class DockWindow : Window
 
         int index = ViewModel.ComputeDropIndex(main);
         foreach (var path in paths)
-            ViewModel.PinApp(path, index++);
+            // Pin a .lnk's destination, not the .lnk — but keep the shortcut's name (e.g. "Chrome.lnk" → "Chrome").
+            ViewModel.PinApp(TaskbarApps.ResolveToTarget(path), index++, System.IO.Path.GetFileNameWithoutExtension(path));
 
         RefreshTaskbarApps();
     }
@@ -1425,16 +1695,8 @@ public partial class DockWindow : Window
         {
             ToolTipText = "Dockable",
             ContextMenu = menu,
-            // GeneratedIconSource (a BitmapSource) renders the tray glyph in-process,
-            // avoiding H.NotifyIcon's URI-only path that rejects arbitrary bitmaps.
-            IconSource = new GeneratedIconSource
-            {
-                Text = "▦", // squared-grid glyph, evoking a dock of tiles
-                Foreground = new SolidColorBrush(Color.FromRgb(0x70, 0xC0, 0xF0)),
-                Background = Brushes.Transparent,
-                FontSize = 28,
-                Size = 32,
-            },
+            // The app icon (a URI-backed resource, which H.NotifyIcon accepts) renders the tray glyph.
+            IconSource = AppIcon.Tray,
         };
         _trayIcon.TrayLeftMouseUp += (_, _) => ToggleVisibility();
         _trayIcon.ForceCreate();
@@ -1443,11 +1705,15 @@ public partial class DockWindow : Window
     private void ToggleVisibility()
     {
         if (IsVisible)
+        {
             Hide();
+            _acrylic.Hide();
+        }
         else
         {
             Show();
             PositionDock();
+            ApplyGlassEffect();
         }
     }
 
@@ -1455,9 +1721,12 @@ public partial class DockWindow : Window
     {
         _appRefreshTimer.Stop();
         _startWatchTimer.Stop();
+        _pinCheckTimer.Stop();
         _pinWatcher?.Dispose();
         _minimizeHook.Dispose();
         _thumbnails.Dispose();
+        _foreground.Dispose();
+        _acrylic.Dispose();
         _appBar?.Unregister(); // release reserved screen space
         Taskbar.Restore(); // restore the taskbar to its pre-launch state
         _trayIcon?.Dispose();

@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using Dockable.Interop;
 using Dockable.Models;
 using Dockable.Services;
+using Dockable.Shell;
 
 namespace Dockable.ViewModels;
 
@@ -31,7 +32,9 @@ public sealed partial class DockViewModel : ObservableObject
     private bool? _recycleEmpty;                          // last-seen state; null forces first load
     private List<DockItemViewModel> _appVms = new();
     private readonly Dictionary<string, DockItemViewModel> _appByKey = new();
+    private readonly Dictionary<string, string> _aumidNameCache = new(); // UWP AUMID → friendly app name
     private readonly List<DockItemViewModel> _minimizedVms = new();
+    private readonly List<DockItemViewModel> _departing = new(); // apps shrinking out before removal
     private long _appSeq; // monotonic counter stamping each app's first-seen order
     private bool _appsInitialized; // the first refresh records windows without bouncing (apps already open)
     private bool _bounceRequested; // set during a refresh when any app gained a window
@@ -152,11 +155,22 @@ public sealed partial class DockViewModel : ObservableObject
         Settings = _store.Load();
         ShowRunningIndicators = Settings.ShowRunningIndicators;
 
-        // First run: seed the dock's pin list from the current taskbar order. Afterwards the
-        // dock owns it (reorder / pin / unpin are persisted and don't touch the taskbar).
+        // First run: seed the dock's pin list from the current taskbar order, resolving each .lnk to
+        // its actual target so we pin the destination (exe), not the shortcut file. Afterwards the
+        // dock owns it (reorder / pin / unpin are persisted and don't touch the taskbar). On this
+        // first launch we replicate silently — the known-pins baseline is set to the same set so the
+        // "new pin?" prompt only fires for shortcuts pinned to the taskbar *after* first run.
         if (Settings.PinnedApps is null)
         {
-            Settings.PinnedApps = TaskbarApps.GetPinnedOrder().ToList();
+            RecordNamesForTaskbarPins(); // remember each .lnk's name before it's resolved to a target
+            var seeded = TaskbarApps.GetPinnedOrder()
+                .Select(TaskbarApps.ResolveToTarget)
+                .ToList();
+            Settings.PinnedApps = seeded;
+            Settings.KnownTaskbarPins ??= seeded
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
             Save();
         }
 
@@ -201,37 +215,60 @@ public sealed partial class DockViewModel : ObservableObject
                 claimed[i] = true;
                 handles.Add(windows[i].Hwnd);
             }
-            var vm = UpdateApp(pin.Key, Path.GetFileNameWithoutExtension(path), path, handles.Count > 0 ? handles : null);
+            var vm = UpdateApp(pin.Key, PinDisplayName(path), path, handles.Count > 0 ? handles : null);
             vm.IsPinned = true;
             desired.Add(vm);
         }
 
-        // Remaining (unclaimed) windows, grouped by exe, appended as unpinned apps.
-        var byExe = new Dictionary<string, List<IntPtr>>(StringComparer.OrdinalIgnoreCase);
+        // Remaining (unclaimed) windows, grouped by app identity (UWP AUMID / exe / window), appended
+        // as unpinned apps — so UWP apps show their real name+icon and elevated apps still appear.
+        var groups = new Dictionary<string, (string Name, string LaunchPath, List<IntPtr> Handles)>();
+        var groupOrder = new List<string>();
         for (int i = 0; i < windows.Count; i++)
         {
             if (claimed[i])
                 continue;
-            if (!byExe.TryGetValue(windows[i].ExePath, out var handles))
-                byExe[windows[i].ExePath] = handles = new List<IntPtr>();
-            handles.Add(windows[i].Hwnd);
+            var (key, name, launchPath) = IdentifyWindow(windows[i]);
+            if (!groups.TryGetValue(key, out var group))
+            {
+                group = (name, launchPath, new List<IntPtr>());
+                groups[key] = group;
+                groupOrder.Add(key);
+            }
+            group.Handles.Add(windows[i].Hwnd);
         }
         // Order unpinned apps by when they were first seen (≈ open order), not by Z-order/focus,
         // so the row stays stable as the user focuses different windows.
         var unpinned = new List<DockItemViewModel>();
-        foreach (var (exe, handles) in byExe)
+        foreach (var key in groupOrder)
         {
-            var vm = UpdateApp(exe.ToLowerInvariant(), SafeName(exe), exe, handles);
+            var group = groups[key];
+            var vm = UpdateApp(key, group.Name, group.LaunchPath, group.Handles);
             vm.IsPinned = false;
             unpinned.Add(vm);
         }
         unpinned.Sort((a, b) => a.SeenOrder.CompareTo(b.SeenOrder));
         desired.AddRange(unpinned);
 
-        // Drop view-models for apps that disappeared.
+        // Apps that disappeared this refresh fade out (shrink-out) instead of vanishing and snapping the
+        // row's width. They stay in the layout (kept roughly in place) until the shrink finishes, then
+        // FinalizeDeparted removes them.
         var liveKeys = desired.Select(d => d.AppKey).ToHashSet();
-        foreach (var key in _appByKey.Keys.Where(k => !liveKeys.Contains(k)).ToList())
-            _appByKey.Remove(key);
+        var previousOrder = _appVms; // before reassignment, to keep a departing icon near its old slot
+        foreach (var vm in _appByKey.Values)
+        {
+            if (liveKeys.Contains(vm.AppKey) || vm.Departing)
+                continue;
+            vm.Departing = true;
+            _departing.Add(vm);
+        }
+        foreach (var vm in _departing)
+        {
+            if (!vm.IsTaskbarApp || desired.Contains(vm))
+                continue;
+            int at = previousOrder.IndexOf(vm);
+            desired.Insert(at >= 0 && at <= desired.Count ? at : desired.Count, vm);
+        }
 
         _appVms = desired;
         RefreshRecycleBin();
@@ -258,16 +295,23 @@ public sealed partial class DockViewModel : ObservableObject
 
     private DockItemViewModel UpdateApp(string key, string name, string launchPath, List<IntPtr>? windows)
     {
-        if (!_appByKey.TryGetValue(key, out var vm))
+        bool isNew = !_appByKey.TryGetValue(key, out var vm);
+        if (isNew)
         {
             var model = DockItem.CreateTaskbarApp(name);
             model.TargetPath = launchPath; // used for icon extraction
             vm = new DockItemViewModel(model) { AppKey = key, LaunchPath = launchPath, SeenOrder = _appSeq++ };
+            vm.AppearScale = _appsInitialized ? 0.0 : 1.0; // grow in (but not for apps already open at startup)
             _appByKey[key] = vm;
-            _ = vm.LoadIconAsync(IconPixelSize);
+        }
+        else if (vm!.Departing)
+        {
+            // The app came back before its shrink-out finished — cancel the departure (it eases back in).
+            vm.Departing = false;
+            _departing.Remove(vm);
         }
 
-        vm.LaunchPath = launchPath;
+        vm!.LaunchPath = launchPath;
         var handles = windows ?? (IReadOnlyList<IntPtr>)Array.Empty<IntPtr>();
 
         // Bounce the icon when the app gains a window it didn't have last refresh (e.g. on launch).
@@ -287,7 +331,46 @@ public sealed partial class DockViewModel : ObservableObject
 
         vm.Windows = handles is IntPtr[] arr ? arr : handles.ToArray();
         vm.IsRunning = vm.Windows.Count > 0;
+
+        // Load the icon after Windows is set, so apps with no readable exe (launchPath empty) can fall
+        // back to their window's own icon.
+        if (isNew)
+            _ = vm.LoadIconAsync(IconPixelSize);
         return vm;
+    }
+
+    /// <summary>
+    /// Derives a running window's app identity the way the taskbar does: packaged (UWP/Store) apps —
+    /// including those hosted by ApplicationFrameHost — are keyed by their AppUserModelID with the
+    /// name/icon coming from the AppsFolder shell item; normal apps by their executable; and apps whose
+    /// exe we can't read (elevated, e.g. Task Manager) by their window (title + the window's own icon).
+    /// </summary>
+    private (string Key, string Name, string LaunchPath) IdentifyWindow(TaskbarApps.RunningWindow w)
+    {
+        if (TaskbarApps.IsPackagedAumid(w.Aumid))
+        {
+            string launchPath = $"shell:AppsFolder\\{w.Aumid}";
+            return ("uwp:" + w.Aumid.ToLowerInvariant(), AumidDisplayName(w.Aumid, w.Title), launchPath);
+        }
+        if (!string.IsNullOrEmpty(w.ExePath))
+            return (w.ExePath.ToLowerInvariant(), SafeName(w.ExePath), w.ExePath);
+
+        string id = string.IsNullOrEmpty(w.Aumid) ? w.Title : w.Aumid;
+        return ("win:" + id.ToLowerInvariant(), w.Title, string.Empty); // empty launch path → window icon
+    }
+
+    /// <summary>The AppsFolder display name for an AUMID (cached); falls back to the window title.</summary>
+    private string AumidDisplayName(string aumid, string fallbackTitle)
+    {
+        if (_aumidNameCache.TryGetValue(aumid, out string? cached))
+            return cached;
+        string? name = ShortcutService.GetShellDisplayName($"shell:AppsFolder\\{aumid}");
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            _aumidNameCache[aumid] = name;
+            return name;
+        }
+        return string.IsNullOrWhiteSpace(fallbackTitle) ? aumid : fallbackTitle;
     }
 
     // --- Dock-owned pin mutations (persisted; do not touch the Windows taskbar) ---
@@ -304,17 +387,120 @@ public sealed partial class DockViewModel : ObservableObject
         Save();
     }
 
-    /// <summary>Pins an app/file at the given index (no-op if already pinned at that spot).</summary>
-    public void PinApp(string launchPath, int index)
+    /// <summary>Pins an app/file at the given index (no-op if already pinned at that spot).
+    /// <paramref name="displayName"/> is the label to remember for the pin (e.g. the dropped app's open
+    /// name); when empty it's derived from the path.</summary>
+    public void PinApp(string launchPath, int index, string? displayName = null)
     {
         if (string.IsNullOrWhiteSpace(launchPath))
             return;
+        RecordPinName(launchPath, displayName);
         var list = Settings.PinnedApps ??= new List<string>();
         int current = list.FindIndex(p => string.Equals(p, launchPath, StringComparison.OrdinalIgnoreCase));
         if (current >= 0)
             list.RemoveAt(current);
         list.Insert(Math.Clamp(index, 0, list.Count), launchPath);
         Save();
+    }
+
+    /// <summary>Remembers a friendly display name for a pinned launch path (ignored when blank).</summary>
+    public void RecordPinName(string launchPath, string? displayName)
+    {
+        if (string.IsNullOrWhiteSpace(launchPath) || string.IsNullOrWhiteSpace(displayName))
+            return;
+        (Settings.PinNames ??= new Dictionary<string, string>())[launchPath] = displayName;
+    }
+
+    /// <summary>The label for a pinned launch path: the remembered name if any, else derived from the path.</summary>
+    public string PinDisplayName(string launchPath)
+    {
+        if (Settings.PinNames is { } names)
+            foreach (var kv in names)
+                if (string.Equals(kv.Key, launchPath, StringComparison.OrdinalIgnoreCase))
+                    return kv.Value;
+        return DerivePinName(launchPath);
+    }
+
+    /// <summary>Best-effort name from a launch path alone: an AppsFolder app's shell name, else the file
+    /// name (without extension, case preserved — so a resolved <c>chrome.exe</c> still reads "chrome"
+    /// only when no original shortcut name was captured).</summary>
+    private static string DerivePinName(string launchPath)
+    {
+        if (launchPath.StartsWith("shell:AppsFolder", StringComparison.OrdinalIgnoreCase))
+        {
+            string? shellName = ShortcutService.GetShellDisplayName(launchPath);
+            if (!string.IsNullOrWhiteSpace(shellName))
+                return shellName;
+        }
+        return Path.GetFileNameWithoutExtension(launchPath);
+    }
+
+    /// <summary>The friendly name for a taskbar pin <em>source</em> (a .lnk's file name, or an
+    /// AppsFolder app's shell name) — captured before resolving the .lnk to its target.</summary>
+    private static string SourcePinName(string source)
+    {
+        if (source.StartsWith("shell:AppsFolder", StringComparison.OrdinalIgnoreCase))
+            return DerivePinName(source);
+        return Path.GetFileNameWithoutExtension(source); // "Chrome.lnk" → "Chrome" (case preserved)
+    }
+
+    /// <summary>Records friendly names for the current taskbar pins (keyed by their resolved target), so a
+    /// resolved <c>chrome.exe</c> pin still shows "Chrome". Called when seeding / replicating taskbar pins.</summary>
+    private void RecordNamesForTaskbarPins()
+    {
+        foreach (var source in TaskbarApps.GetPinnedOrder())
+        {
+            string target = TaskbarApps.ResolveToTarget(source);
+            if (!string.IsNullOrWhiteSpace(target))
+                RecordPinName(target, SourcePinName(source));
+        }
+    }
+
+    // --- Taskbar-pin replication (offer to mirror newly-pinned taskbar shortcuts) ---
+
+    /// <summary>
+    /// Taskbar pins (resolved to their targets) that have appeared since we last looked. On the very
+    /// first call it just records the current set as the baseline and returns none, so we don't offer
+    /// to replicate everything the user already had pinned.
+    /// </summary>
+    public IReadOnlyList<string> FindNewTaskbarPins()
+    {
+        var current = TaskbarApps.GetPinnedOrder()
+            .Select(TaskbarApps.ResolveToTarget)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (Settings.KnownTaskbarPins is null)
+        {
+            Settings.KnownTaskbarPins = current;
+            Save();
+            return Array.Empty<string>();
+        }
+
+        var known = new HashSet<string>(Settings.KnownTaskbarPins, StringComparer.OrdinalIgnoreCase);
+        return current.Where(p => !known.Contains(p)).ToList();
+    }
+
+    /// <summary>Records pins as "seen" so they don't prompt again, regardless of the user's choice.</summary>
+    public void RememberTaskbarPins(IEnumerable<string> pins)
+    {
+        var known = Settings.KnownTaskbarPins ??= new List<string>();
+        foreach (var p in pins)
+            if (!known.Contains(p, StringComparer.OrdinalIgnoreCase))
+                known.Add(p);
+        Save();
+    }
+
+    /// <summary>Adds the given taskbar pins to the dock (appended) and marks them as seen.</summary>
+    public void ReplicateTaskbarPins(IReadOnlyList<string> pins)
+    {
+        RecordNamesForTaskbarPins(); // capture each .lnk's name for its resolved target
+        var list = Settings.PinnedApps ??= new List<string>();
+        foreach (var p in pins)
+            if (!list.Contains(p, StringComparer.OrdinalIgnoreCase))
+                list.Add(p);
+        RememberTaskbarPins(pins); // also saves
     }
 
     public void UnpinApp(string launchPath)
@@ -324,6 +510,20 @@ public sealed partial class DockViewModel : ObservableObject
             return;
         if (list.RemoveAll(p => string.Equals(p, launchPath, StringComparison.OrdinalIgnoreCase)) > 0)
             Save();
+    }
+
+    /// <summary>Renames a pinned shortcut's display label: persists the new name and updates the live tile.</summary>
+    public void RenamePin(string launchPath, string newName)
+    {
+        newName = newName?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(newName))
+            return;
+        RecordPinName(launchPath, newName);
+        var vm = _appByKey.Values.FirstOrDefault(
+            a => string.Equals(a.LaunchPath, launchPath, StringComparison.OrdinalIgnoreCase));
+        if (vm is not null)
+            vm.DisplayName = newName;
+        Save();
     }
 
     private static string SafeName(string exePath)
@@ -385,6 +585,35 @@ public sealed partial class DockViewModel : ObservableObject
 
         if (ReconcileItems(desired))
             RecomputeLayout();
+
+        // If anything is mid grow-in / shrink-out, make sure the render loop runs to animate it.
+        foreach (var item in desired)
+            if (item.Departing || Math.Abs(item.AppearScale - 1.0) > 0.01)
+            {
+                AnimationRequested?.Invoke();
+                break;
+            }
+    }
+
+    /// <summary>True once a departing item has shrunk to nothing and is ready to be removed.</summary>
+    public bool HasFinishedDeparting => _departing.Exists(d => d.AppearScale < 0.02);
+
+    /// <summary>Removes items whose shrink-out has finished, then recomposes. Driven from the render loop.</summary>
+    public void FinalizeDeparted()
+    {
+        if (_departing.Count == 0)
+            return;
+        var done = _departing.Where(d => d.AppearScale < 0.02).ToList();
+        if (done.Count == 0)
+            return;
+        foreach (var d in done)
+        {
+            _departing.Remove(d);
+            d.Departing = false;
+            _appByKey.Remove(d.AppKey);
+            _appVms.Remove(d);
+        }
+        ComposeItems();
     }
 
     /// <summary>Updates <see cref="Items"/> to match <paramref name="desired"/> with minimal changes.</summary>

@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using Dockable.Interop;
 using Dockable.Models;
 using Dockable.ViewModels;
 
@@ -28,16 +29,20 @@ public partial class SettingsWindow : Window
     private readonly Action<DockTheme> _setTheme;
     private readonly Action<DockEdge> _setEdge;
     private readonly Action<bool> _setHideTaskbar;
+    private readonly Action<GlassEffect> _setGlassEffect;
     private bool _initializing;
 
-    public SettingsWindow(DockViewModel vm, Action<DockTheme> setTheme, Action<DockEdge> setEdge, Action<bool> setHideTaskbar)
+    public SettingsWindow(DockViewModel vm, Action<DockTheme> setTheme, Action<DockEdge> setEdge,
+        Action<bool> setHideTaskbar, Action<GlassEffect> setGlassEffect)
     {
         _vm = vm;
         _setTheme = setTheme;
         _setEdge = setEdge;
         _setHideTaskbar = setHideTaskbar;
+        _setGlassEffect = setGlassEffect;
         _initializing = true; // set before InitializeComponent so initial events no-op
         InitializeComponent();
+        Icon = AppIcon.Large;
 
         var s = vm.Settings;
 
@@ -54,8 +59,10 @@ public partial class SettingsWindow : Window
         MagnificationSlider.Value = MagnificationToStep(s);
 
         PositionCombo.SelectedIndex = (int)s.Edge;   // DockEdge: Bottom, Left, Right, Top (matches combo order)
+        GlassEffectCombo.SelectedIndex = (int)s.GlassEffect; // GlassEffect: Simple, Acrylic, LiquidGlass
         MinimizeCombo.SelectedIndex = (int)s.MinimizeEffect; // MinimizeEffect: Suck, Scale, Genie
         EffectSpeedSlider.Value = SpeedToSlider(s.EffectSpeed);
+        OpenAtLoginSwitch.IsChecked = StartupManager.IsEnabled(StartupEntryName);
         IndicatorsSwitch.IsChecked = s.ShowRunningIndicators;
         AnimateOpeningSwitch.IsChecked = s.AnimateOpeningApps;
         MinimizeIntoIconSwitch.IsChecked = s.MinimizeIntoIcon;
@@ -98,6 +105,40 @@ public partial class SettingsWindow : Window
         AutoSel.BorderBrush = AutoRadio.IsChecked == true ? RingBrush : Brushes.Transparent;
     }
 
+    // Registry Run-key entry name for launching Dockable itself at login.
+    private const string StartupEntryName = "Dockable";
+
+    // Adds/removes Dockable from the Windows startup sequence (HKCU Run key).
+    private void OpenAtLoginSwitch_Click(object sender, RoutedEventArgs e)
+    {
+        if (OpenAtLoginSwitch.IsChecked == true)
+        {
+            string exe = Environment.ProcessPath ?? "";
+            if (!string.IsNullOrEmpty(exe))
+                StartupManager.Enable(StartupEntryName, exe);
+        }
+        else
+        {
+            StartupManager.Disable(StartupEntryName);
+        }
+    }
+
+    // Opens the Windows "Startup Apps" settings page in a new window.
+    private void StartupApps_Click(object sender, MouseButtonEventArgs e)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:startupapps")
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch
+        {
+            // Best-effort; the settings deep-link may be unavailable on some SKUs.
+        }
+    }
+
     // Click fires only on user interaction (not the constructor's IsChecked set), so no guard needed.
     private void IndicatorsSwitch_Click(object sender, RoutedEventArgs e)
         => _vm.SetShowRunningIndicators(IndicatorsSwitch.IsChecked == true);
@@ -126,6 +167,15 @@ public partial class SettingsWindow : Window
         if (_initializing)
             return;
         _setEdge((DockEdge)PositionCombo.SelectedIndex); // 0 Bottom, 1 Left, 2 Right, 3 Top
+    }
+
+    // --- Glass effect ---
+
+    private void GlassEffectCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing)
+            return;
+        _setGlassEffect((GlassEffect)GlassEffectCombo.SelectedIndex); // 0 Simple, 1 Acrylic, 2 LiquidGlass
     }
 
     // --- Minimize effect ---

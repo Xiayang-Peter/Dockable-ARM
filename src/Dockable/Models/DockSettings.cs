@@ -9,6 +9,19 @@ public enum DockEdge
     Top,
 }
 
+/// <summary>How the dock bar's background is rendered.</summary>
+public enum GlassEffect
+{
+    /// <summary>Plain translucent bar (the pre-acrylic look); no backdrop window. Lightest.</summary>
+    Simple,
+
+    /// <summary>Live system acrylic blur of the desktop behind the bar.</summary>
+    Acrylic,
+
+    /// <summary>Custom blur + saturation (+ edge refraction); falls back to Acrylic if unsupported.</summary>
+    LiquidGlass,
+}
+
 /// <summary>Which color theme the dock paints with.</summary>
 public enum DockTheme
 {
@@ -41,6 +54,9 @@ public sealed class DockSettings
 
     /// <summary>Color theme: follow the OS (System) or force Light/Dark.</summary>
     public DockTheme Theme { get; set; } = DockTheme.System;
+
+    /// <summary>Dock bar background style (Simple / Acrylic / Liquid Glass).</summary>
+    public GlassEffect GlassEffect { get; set; } = GlassEffect.Acrylic;
 
     /// <summary>Window minimize/restore animation style.</summary>
     public MinimizeEffect MinimizeEffect { get; set; } = MinimizeEffect.Genie;
@@ -84,6 +100,25 @@ public sealed class DockSettings
     /// after which the dock owns it (reorder / pin / unpin don't touch the Windows taskbar).
     /// </summary>
     public List<string>? PinnedApps { get; set; }
+
+    /// <summary>Prompt to replicate newly-pinned taskbar shortcuts onto the dock.</summary>
+    public bool AskReplicateTaskbarPins { get; set; } = true;
+
+    /// <summary>Prompt to add Dockable to the Windows startup sequence.</summary>
+    public bool AskAddToStartup { get; set; } = true;
+
+    /// <summary>
+    /// Taskbar pins we've already seen/offered (resolved targets), so only newly-added pins prompt.
+    /// Null = not yet initialized (the first check establishes the baseline silently).
+    /// </summary>
+    public List<string>? KnownTaskbarPins { get; set; }
+
+    /// <summary>
+    /// Friendly display names for pinned launch paths, captured when a pin is created (a dropped app's
+    /// open name, or a shortcut's name) — because a resolved target (e.g. <c>chrome.exe</c>) or an
+    /// AppsFolder AUMID doesn't carry the human name the .lnk / running app had.
+    /// </summary>
+    public Dictionary<string, string>? PinNames { get; set; }
 
     public static DockSettings CreateDefault() => new();
 }
