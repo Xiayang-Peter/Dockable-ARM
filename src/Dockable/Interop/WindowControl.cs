@@ -26,6 +26,37 @@ public static class WindowControl
 
     public static bool IsWindow(IntPtr hwnd) => PInvoke.IsWindow((HWND)hwnd);
 
+    public static bool IsIconic(IntPtr hwnd) => PInvoke.IsIconic((HWND)hwnd);
+
+    private const uint WM_CLOSE = 0x0010;
+
+    /// <summary>Gracefully asks a window to close (posts WM_CLOSE; the app can prompt to save).</summary>
+    public static void Close(IntPtr hwnd) => PInvoke.PostMessage((HWND)hwnd, WM_CLOSE, default, default);
+
+    /// <summary>The id of the process that owns a window (0 if it can't be determined).</summary>
+    public static unsafe uint GetProcessId(IntPtr hwnd)
+    {
+        uint pid = 0;
+        PInvoke.GetWindowThreadProcessId((HWND)hwnd, &pid);
+        return pid;
+    }
+
+    /// <summary>
+    /// Restores a minimized window to its previous bounds WITHOUT activating it (focus and z-order
+    /// to top are left untouched). Used to momentarily refill the spot a just-minimized window left
+    /// behind while the genie overlay paints its first frame — with transitions suppressed it's
+    /// instant, so no OS restore animation plays.
+    /// </summary>
+    public static void ShowNoActivate(IntPtr hwnd) =>
+        PInvoke.ShowWindow((HWND)hwnd, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
+
+    /// <summary>
+    /// Minimizes a window WITHOUT activating the next window (focus is left untouched). With OS
+    /// transitions suppressed it's instant, so it can run hidden behind the genie overlay.
+    /// </summary>
+    public static void MinimizeNoActivate(IntPtr hwnd) =>
+        PInvoke.ShowWindow((HWND)hwnd, SHOW_WINDOW_CMD.SW_SHOWMINNOACTIVE);
+
     /// <summary>The window's restored (non-minimized) bounds in physical pixels, or null.</summary>
     public static Int32Rect? GetRestoreRect(IntPtr hwnd)
     {

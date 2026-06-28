@@ -1,4 +1,5 @@
 using System.Windows;
+using Dockable.Models;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Shell;
@@ -45,25 +46,42 @@ public sealed class AppBarManager
     }
 
     /// <summary>
-    /// Reserves a strip of <paramref name="thicknessPx"/> along the bottom of
+    /// Reserves a strip of <paramref name="thicknessPx"/> along the given <paramref name="edge"/> of
     /// <paramref name="monitorPx"/> and returns the granted rectangle (physical pixels).
     /// </summary>
-    public unsafe Int32Rect ReserveBottom(Rect monitorPx, int thicknessPx)
+    public unsafe Int32Rect ReserveEdge(DockEdge edge, Rect monitorPx, int thicknessPx)
     {
+        int left = (int)Math.Round(monitorPx.Left);
+        int top = (int)Math.Round(monitorPx.Top);
+        int right = (int)Math.Round(monitorPx.Right);
+        int bottom = (int)Math.Round(monitorPx.Bottom);
+
         var data = NewData();
-        data.uEdge = PInvoke.ABE_BOTTOM;
-        data.rc = new RECT
+        data.uEdge = edge switch
         {
-            left = (int)Math.Round(monitorPx.Left),
-            top = (int)Math.Round(monitorPx.Bottom) - thicknessPx,
-            right = (int)Math.Round(monitorPx.Right),
-            bottom = (int)Math.Round(monitorPx.Bottom),
+            DockEdge.Top => PInvoke.ABE_TOP,
+            DockEdge.Left => PInvoke.ABE_LEFT,
+            DockEdge.Right => PInvoke.ABE_RIGHT,
+            _ => PInvoke.ABE_BOTTOM,
+        };
+        data.rc = edge switch
+        {
+            DockEdge.Top => new RECT { left = left, top = top, right = right, bottom = top + thicknessPx },
+            DockEdge.Left => new RECT { left = left, top = top, right = left + thicknessPx, bottom = bottom },
+            DockEdge.Right => new RECT { left = right - thicknessPx, top = top, right = right, bottom = bottom },
+            _ => new RECT { left = left, top = bottom - thicknessPx, right = right, bottom = bottom },
         };
 
-        // QUERYPOS lets the shell adjust the proposed rect around existing appbars
-        // (e.g. the taskbar); we then re-assert our thickness before SETPOS grants it.
+        // QUERYPOS lets the shell adjust the proposed rect around existing appbars (e.g. the
+        // taskbar); we then re-assert our thickness on the docked edge before SETPOS grants it.
         PInvoke.SHAppBarMessage(PInvoke.ABM_QUERYPOS, &data);
-        data.rc.top = data.rc.bottom - thicknessPx;
+        switch (edge)
+        {
+            case DockEdge.Top: data.rc.bottom = data.rc.top + thicknessPx; break;
+            case DockEdge.Left: data.rc.right = data.rc.left + thicknessPx; break;
+            case DockEdge.Right: data.rc.left = data.rc.right - thicknessPx; break;
+            default: data.rc.top = data.rc.bottom - thicknessPx; break;
+        }
         PInvoke.SHAppBarMessage(PInvoke.ABM_SETPOS, &data);
 
         return new Int32Rect(data.rc.left, data.rc.top,

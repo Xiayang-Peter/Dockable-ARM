@@ -10,6 +10,9 @@ namespace Dockable.Genie;
 /// </summary>
 public interface IMinimizeAnimator
 {
+    /// <summary>Speed multiplier for the animation (1 = default; &gt;1 plays faster, &lt;1 slower).</summary>
+    double SpeedMultiplier { get; set; }
+
     /// <summary>Builds the reusable overlay ahead of time so the first play is instant.</summary>
     void Prewarm();
 

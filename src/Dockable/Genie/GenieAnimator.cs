@@ -26,9 +26,30 @@ public sealed class GenieAnimator : IMinimizeAnimator
 {
     private const int Columns = 6;
     private const int Rows = 48;
-    private const double Stagger = 0.7;
-    private const double TargetWidth = 4;
-    private const double DurationMs = 360;
+
+    /// <summary>Which curve the mesh warp uses; both share the engine, differing only in shaping.</summary>
+    public enum GenieStyle { Suck, Genie }
+
+    /// <summary>Per-style curve parameters.</summary>
+    /// <param name="Stagger">How far the leading rows run ahead of the trailing ones (the flow).</param>
+    /// <param name="TargetWidth">Neck/point width at full warp (DIP).</param>
+    /// <param name="WidthBulge">Mid-neck width bulge as a fraction of the source width (negative pinches).</param>
+    /// <param name="Duration">Animation length in ms.</param>
+    private readonly record struct StyleParams(double Stagger, double TargetWidth, double WidthBulge, double Duration);
+
+    private static StyleParams ParamsFor(GenieStyle style) => style switch
+    {
+        // Smoke flowing into a bottle: a gentle stagger and a bulging belly in the neck, a touch slower.
+        GenieStyle.Genie => new StyleParams(Stagger: 0.5, TargetWidth: 6, WidthBulge: 0.35, Duration: 430),
+        // Paper sucked into a vacuum: a hard, fast funnel that whips edge-first to a point, no belly.
+        _ => new StyleParams(Stagger: 0.95, TargetWidth: 2, WidthBulge: -0.08, Duration: 270),
+    };
+
+    /// <summary>Which curve to warp with; set before each play (defaults to the Suck funnel).</summary>
+    public GenieStyle Style { get; set; } = GenieStyle.Suck;
+
+    /// <summary>Speed multiplier; &gt;1 shortens the duration (faster), &lt;1 lengthens it (slower).</summary>
+    public double SpeedMultiplier { get; set; } = 1.0;
 
     private Window? _overlay;
     private MeshGeometry3D? _mesh;
@@ -42,6 +63,10 @@ public sealed class GenieAnimator : IMinimizeAnimator
     private Point _monitorOrigin; // monitor top-left (DIP), to convert later AnimateTo targets
     private double _height;
     private bool _reverse;
+    // Which window edge leads the warp: the edge nearest the dock tile. Top-anchored docks lead from
+    // the top (flow downward→up into the tile); bottom-anchored docks lead from the bottom.
+    private bool _leadFromTop;
+    private StyleParams _params = ParamsFor(GenieStyle.Suck); // resolved at the start of each play
     private Action? _onCompleted;
     private TimeSpan _startTime;
 
@@ -59,10 +84,12 @@ public sealed class GenieAnimator : IMinimizeAnimator
         _target = new Point(targetDip.X - monitorDip.Left, targetDip.Y - monitorDip.Top);
         _height = monitorDip.Height;
         _reverse = reverse;
+        _leadFromTop = LeadsFromTop();
+        _params = ParamsFor(Style);
         _onCompleted = onCompleted;
         _startTime = TimeSpan.Zero;
 
-        UpdateMesh(_mesh!, _src, _target, _height, reverse ? 1.0 : 0.0);
+        UpdateMesh(reverse ? 1.0 : 0.0);
         _overlay!.Visibility = Visibility.Visible;
 
         if (_rendering is null)
@@ -83,9 +110,10 @@ public sealed class GenieAnimator : IMinimizeAnimator
         _height = monitorDip.Height;
         _target = new Point(_src.Left + _src.Width / 2, _src.Top + _src.Height / 2); // until AnimateTo
         _reverse = false;
+        _params = ParamsFor(Style);
         _onCompleted = null;
 
-        UpdateMesh(_mesh!, _src, _target, _height, 0.0); // un-warped: the window exactly where it was
+        UpdateMesh(0.0); // un-warped: the window exactly where it was
         _overlay!.Visibility = Visibility.Visible;
     }
 
@@ -94,10 +122,12 @@ public sealed class GenieAnimator : IMinimizeAnimator
         EnsureOverlay();
         _target = new Point(targetDip.X - _monitorOrigin.X, targetDip.Y - _monitorOrigin.Y);
         _reverse = reverse;
+        _leadFromTop = LeadsFromTop();
+        _params = ParamsFor(Style);
         _onCompleted = onCompleted;
         _startTime = TimeSpan.Zero;
 
-        UpdateMesh(_mesh!, _src, _target, _height, reverse ? 1.0 : 0.0);
+        UpdateMesh(reverse ? 1.0 : 0.0);
         _overlay!.Visibility = Visibility.Visible;
 
         if (_rendering is null)
@@ -113,9 +143,10 @@ public sealed class GenieAnimator : IMinimizeAnimator
         if (_startTime == TimeSpan.Zero)
             _startTime = now;
 
-        double progress = Math.Min(1.0, (now - _startTime).TotalMilliseconds / DurationMs);
+        double duration = _params.Duration / Math.Max(0.1, SpeedMultiplier);
+        double progress = Math.Min(1.0, (now - _startTime).TotalMilliseconds / duration);
         double warp = _reverse ? 1.0 - progress : progress;
-        UpdateMesh(_mesh!, _src, _target, _height, warp);
+        UpdateMesh(warp);
 
         if (progress >= 1.0)
         {
@@ -236,8 +267,12 @@ public sealed class GenieAnimator : IMinimizeAnimator
     /// Recomputes vertex positions for a given warp amount. Lower rows lead (a staggered flow),
     /// pinching their width and sliding toward the target, producing the genie neck/funnel.
     /// </summary>
-    private static void UpdateMesh(MeshGeometry3D mesh, Rect src, Point target, double windowHeight, double warp)
+    private void UpdateMesh(double warp)
     {
+        var mesh = _mesh!;
+        var src = _src;
+        var target = _target;
+        var p = _params;
         var positions = mesh.Positions;
         double srcCenterX = src.Left + src.Width / 2;
         int rowStride = Columns + 1;
@@ -245,11 +280,18 @@ public sealed class GenieAnimator : IMinimizeAnimator
         for (int j = 0; j <= Rows; j++)
         {
             double v = (double)j / Rows;
-            double lp = Clamp01(warp * (1 + Stagger) - (1 - v) * Stagger);
+            // The edge nearest the dock leads the flow: the top rows (v=0) for a top-anchored dock,
+            // the bottom rows (v=1) otherwise.
+            double lead = _leadFromTop ? v : 1 - v;
+            double lp = Clamp01(warp * (1 + p.Stagger) - lead * p.Stagger);
             double e = SmoothStep(lp);
 
             double rowCenterX = Lerp(srcCenterX, target.X, e);
-            double rowWidth = Lerp(src.Width, TargetWidth, e);
+            // Width tapers from the body to the neck; the bulge term bellies the mid-neck out (smoke
+            // into a bottle) for the Genie style, or pinches it (negative) for the rigid Suck funnel.
+            double baseWidth = Lerp(src.Width, p.TargetWidth, e);
+            double bulge = p.WidthBulge * src.Width * Math.Sin(Math.PI * e);
+            double rowWidth = Math.Max(p.TargetWidth, baseWidth + bulge);
             double origY = src.Top + v * src.Height;
             double y = Lerp(origY, target.Y, e);
 
@@ -258,10 +300,13 @@ public sealed class GenieAnimator : IMinimizeAnimator
                 double u = (double)i / Columns;
                 double x = rowCenterX + (u - 0.5) * rowWidth;
                 // 3D Y is up; screen Y is down — flip into the orthographic camera's space.
-                positions[j * rowStride + i] = new Point3D(x, windowHeight - y, 0);
+                positions[j * rowStride + i] = new Point3D(x, _height - y, 0);
             }
         }
     }
+
+    /// <summary>The tile is above the window's center → the dock is on the top edge, so lead from the top.</summary>
+    private bool LeadsFromTop() => _target.Y < _src.Top + _src.Height / 2;
 
     private static double Clamp01(double t) => t < 0 ? 0 : t > 1 ? 1 : t;
     private static double Lerp(double a, double b, double t) => a + (b - a) * t;

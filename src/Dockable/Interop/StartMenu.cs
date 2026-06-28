@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Windows.Win32;
+using Windows.Win32.Foundation;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
 
 namespace Dockable.Interop;
@@ -20,6 +21,24 @@ public static class StartMenu
         ];
 
         PInvoke.SendInput(inputs, Marshal.SizeOf<INPUT>());
+    }
+
+    /// <summary>
+    /// True when a Windows shell CoreWindow is the foreground window — i.e. the Start menu (or
+    /// Search/Widgets, which share the class) is up. Used to tell whether the Start menu we opened
+    /// from the dock is still showing so the taskbar can stay hidden until it closes.
+    /// </summary>
+    public static bool IsOpen()
+    {
+        HWND foreground = PInvoke.GetForegroundWindow();
+        return !foreground.IsNull && GetClassName(foreground) == "Windows.UI.Core.CoreWindow";
+    }
+
+    private static unsafe string GetClassName(HWND hwnd)
+    {
+        Span<char> buffer = stackalloc char[256];
+        int length = PInvoke.GetClassName(hwnd, buffer);
+        return length > 0 ? new string(buffer[..length]) : string.Empty;
     }
 
     private static INPUT KeyEvent(VIRTUAL_KEY key, bool keyUp)

@@ -87,6 +87,34 @@ public static class Taskbar
         }
     }
 
+    /// <summary>
+    /// Fully hides the taskbar windows (SW_HIDE), overriding auto-hide so the taskbar can't reveal
+    /// itself — e.g. while the Start menu opened from the dock is up. Restore by calling
+    /// <see cref="SetAutoHide"/> (it re-shows the windows first); a crash/exit also restores via
+    /// <see cref="Restore"/>.
+    /// </summary>
+    public static void Hide()
+    {
+        try
+        {
+            HWND primary = PInvoke.FindWindow(PrimaryClass, null!);
+            if (!primary.IsNull)
+                PInvoke.ShowWindow(primary, SHOW_WINDOW_CMD.SW_HIDE);
+
+            // Secondary taskbars (one per additional monitor) have no findable title.
+            PInvoke.EnumWindows((hwnd, _) =>
+            {
+                if (GetClassName(hwnd) == SecondaryClass)
+                    PInvoke.ShowWindow(hwnd, SHOW_WINDOW_CMD.SW_HIDE);
+                return true; // keep enumerating
+            }, default);
+        }
+        catch
+        {
+            // Best-effort; never crash the app over taskbar visibility.
+        }
+    }
+
     private static void EnsureTrayWindowsShown()
     {
         HWND primary = PInvoke.FindWindow(PrimaryClass, null!);

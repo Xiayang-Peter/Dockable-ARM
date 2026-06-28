@@ -150,6 +150,12 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.45" />
+                    <Setter Property="Cursor" Value="Arrow" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
         <!-- Shared text styles -->
@@ -343,7 +349,8 @@
                 <!-- Group 2: pop-up rows -->
                 <Grid Height="44" Margin="16,0">
                     <TextBlock Text="Position on screen" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
-                    <ComboBox x:Name="PositionCombo" Style="{StaticResource MacPopup}" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <ComboBox x:Name="PositionCombo" Style="{StaticResource MacPopup}" HorizontalAlignment="Right"
+                              VerticalAlignment="Center" SelectionChanged="PositionCombo_SelectionChanged">
                         <ComboBoxItem Content="Bottom" />
                         <ComboBoxItem Content="Left" />
                         <ComboBoxItem Content="Right" />
@@ -357,9 +364,30 @@
                     <TextBlock Text="Minimize windows using" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
                     <ComboBox x:Name="MinimizeCombo" Style="{StaticResource MacPopup}" HorizontalAlignment="Right"
                               VerticalAlignment="Center" SelectionChanged="MinimizeCombo_SelectionChanged">
-                        <ComboBoxItem Content="Genie Effect" />
+                        <ComboBoxItem Content="Suck Effect" />
                         <ComboBoxItem Content="Scale Effect" />
+                        <ComboBoxItem Content="Genie Effect" />
                     </ComboBox>
+                </Grid>
+
+                <Border Height="1" Background="#E3E3E3" Margin="16,0,0,0" />
+
+                <!-- Effect speed: the slider occupies the right half of the row (Slow … Fast). -->
+                <Grid Margin="16,8,16,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Effect Speed" Style="{StaticResource RowLabel}"
+                               VerticalAlignment="Center" HorizontalAlignment="Left" />
+                    <StackPanel Grid.Column="1">
+                        <Slider x:Name="EffectSpeedSlider" Style="{StaticResource MacSlider}"
+                                Minimum="0" Maximum="1" ValueChanged="EffectSpeedSlider_ValueChanged" />
+                        <Grid Margin="0,2,0,0">
+                            <TextBlock Text="Slow" Style="{StaticResource Caption}" HorizontalAlignment="Left" />
+                            <TextBlock Text="Fast" Style="{StaticResource Caption}" HorizontalAlignment="Right" />
+                        </Grid>
+                    </StackPanel>
                 </Grid>
 
                 <Border Height="1" Background="#E3E3E3" Margin="16,0,0,0" />
@@ -374,19 +402,25 @@
                 <Border Height="1" Background="#E3E3E3" Margin="16,0,0,0" />
 
                 <Grid Height="44" Margin="16,0">
+                    <TextBlock Text="Animate opening applications" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
+                    <ToggleButton x:Name="AnimateOpeningSwitch" Style="{StaticResource MacSwitch}" HorizontalAlignment="Right"
+                                  VerticalAlignment="Center" Click="AnimateOpeningSwitch_Click" />
+                </Grid>
+
+                <Border Height="1" Background="#E3E3E3" Margin="16,0,0,0" />
+
+                <Grid Height="44" Margin="16,0">
+                    <TextBlock Text="Minimize windows into application icon" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
+                    <ToggleButton x:Name="MinimizeIntoIconSwitch" Style="{StaticResource MacSwitch}" HorizontalAlignment="Right"
+                                  VerticalAlignment="Center" Click="MinimizeIntoIconSwitch_Click" />
+                </Grid>
+
+                <Border Height="1" Background="#E3E3E3" Margin="16,0,0,0" />
+
+                <Grid Height="44" Margin="16,0">
                     <TextBlock Text="Automatically hide Windows taskbar" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <!-- Info badge: a gray circle with a lowercase "i"; the feature can't be turned off. -->
-                        <Border Width="16" Height="16" CornerRadius="8" Background="#9E9EA3"
-                                VerticalAlignment="Center" Margin="0,0,10,0" Cursor="Help"
-                                ToolTip="This feature is required">
-                            <TextBlock Text="i" Foreground="White" FontSize="11" FontWeight="SemiBold"
-                                       FontStyle="Italic" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       TextOptions.TextFormattingMode="Ideal" />
-                        </Border>
-                        <ToggleButton x:Name="HideTaskbarSwitch" Style="{StaticResource MacSwitch}"
-                                      IsEnabled="False" VerticalAlignment="Center" />
-                    </StackPanel>
+                    <ToggleButton x:Name="HideTaskbarSwitch" Style="{StaticResource MacSwitch}" HorizontalAlignment="Right"
+                                  VerticalAlignment="Center" Click="HideTaskbarSwitch_Click" />
                 </Grid>
             </StackPanel>
         </Border>

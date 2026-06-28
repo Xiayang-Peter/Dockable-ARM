@@ -108,6 +108,56 @@ public sealed partial class DockItemViewModel : ObservableObject
     /// <summary>Smoothed magnification scale (1 = resting). Plain field; not bound.</summary>
     public double CurrentScale { get; set; } = 1.0;
 
+    // --- Launch bounce (driven per-frame by the layout engine) ---
+
+    /// <summary>Window handles seen at the last refresh, to detect a newly-opened window.</summary>
+    private readonly HashSet<IntPtr> _knownWindows = new();
+
+    /// <summary>UTC ticks the current bounce started; 0 when not bouncing.</summary>
+    private long _bounceStartTicks;
+
+    /// <summary>Current upward bounce offset in DIPs (0 at rest); applied on top of the layout Y.</summary>
+    public double BounceOffset { get; private set; }
+
+    /// <summary>True if <paramref name="hwnd"/> was already present at the last refresh.</summary>
+    public bool HasWindow(IntPtr hwnd) => _knownWindows.Contains(hwnd);
+
+    /// <summary>Records the app's current window set (the baseline for the next refresh's diff).</summary>
+    public void SetKnownWindows(IReadOnlyList<IntPtr> windows)
+    {
+        _knownWindows.Clear();
+        foreach (var h in windows)
+            _knownWindows.Add(h);
+    }
+
+    /// <summary>Starts (or restarts) the launch bounce from the top.</summary>
+    public void StartBounce() => _bounceStartTicks = DateTime.UtcNow.Ticks;
+
+    /// <summary>
+    /// Advances the bounce, setting <see cref="BounceOffset"/> for the current time. The icon hops
+    /// up and back down <c>Hops</c> times; <paramref name="amplitude"/> is the peak lift in DIPs.
+    /// Returns true while still bouncing.
+    /// </summary>
+    public bool UpdateBounce(double amplitude)
+    {
+        if (_bounceStartTicks == 0)
+            return false;
+
+        const double hopMs = 560; // one up-and-down hop (2x slower than the original 280ms)
+        const int hops = 3;
+        double elapsed = (DateTime.UtcNow.Ticks - _bounceStartTicks) / (double)TimeSpan.TicksPerMillisecond;
+        if (elapsed >= hopMs * hops)
+        {
+            _bounceStartTicks = 0;
+            BounceOffset = 0;
+            return false;
+        }
+
+        double phase = (elapsed % hopMs) / hopMs;       // 0..1 within a hop
+        BounceOffset = amplitude * Math.Sin(Math.PI * phase); // smooth arch up then down
+        return true;
+    }
+
     /// <summary>True while this tile is being dragged (lifts it above the row, drives ZIndex).</summary>
     [ObservableProperty]
     private bool _isDragging;

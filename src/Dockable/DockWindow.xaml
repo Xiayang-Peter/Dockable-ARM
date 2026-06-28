@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:Dockable.ViewModels"
         xmlns:conv="clr-namespace:Dockable.Converters"
+        xmlns:sys="clr-namespace:System;assembly=System.Runtime"
         Title="Dockable"
         WindowStyle="None"
         AllowsTransparency="True"
@@ -14,6 +15,7 @@
         SnapsToDevicePixels="True"
         AllowDrop="True"
         DragOver="OnDragOver"
+        DragLeave="OnDragLeave"
         Drop="OnDrop">
 
     <Window.Resources>
@@ -30,6 +32,10 @@
         <SolidColorBrush x:Key="FallbackBgBrush" Color="#1F000000" />
         <SolidColorBrush x:Key="FallbackTextBrush" Color="#CC000000" />
 
+        <!-- Icon drop-shadow opacities (light defaults; more pronounced than dark). ApplyTheme() swaps. -->
+        <sys:Double x:Key="IconShadowOuterOpacity">0.24</sys:Double>
+        <sys:Double x:Key="IconShadowInnerOpacity">0.32</sys:Double>
+
         <!-- One dock entry: Start logo for the Start item, otherwise an extracted icon.
              The container is sized/positioned by the layout engine (Width/Height/Canvas.Left/Top). -->
         <DataTemplate x:Key="DockItemTemplate" DataType="{x:Type vm:DockItemViewModel}">
@@ -37,26 +43,31 @@
                   Background="Transparent"
                   PreviewMouseLeftButtonDown="DockItem_PreviewMouseDown"
                   MouseLeftButtonUp="DockItem_Click"
+                  PreviewMouseRightButtonUp="DockItem_RightClick"
                   MouseEnter="DockItem_MouseEnter">
                 <Grid.Style>
                     <Style TargetType="Grid">
-                        <!-- Separators show a vertical-resize cursor (drag them to resize the dock). -->
+                        <!-- Separators show a resize cursor (drag them to resize the dock): up/down for a
+                             horizontal dock, left/right for a vertical (left/right) dock. -->
                         <Setter Property="Cursor" Value="Hand" />
                         <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsSeparator}" Value="True">
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsSeparator}" Value="True" />
+                                    <Condition Binding="{Binding DataContext.IsVerticalDock, RelativeSource={RelativeSource AncestorType=Window}}" Value="False" />
+                                </MultiDataTrigger.Conditions>
                                 <Setter Property="Cursor" Value="SizeNS" />
-                            </DataTrigger>
+                            </MultiDataTrigger>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsSeparator}" Value="True" />
+                                    <Condition Binding="{Binding DataContext.IsVerticalDock, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Cursor" Value="SizeWE" />
+                            </MultiDataTrigger>
                         </Style.Triggers>
                     </Style>
                 </Grid.Style>
-                <Grid.ContextMenu>
-                    <ContextMenu>
-                        <MenuItem Header="Unpin" Click="UnpinItem_Click" IsEnabled="{Binding CanUnpin}"
-                                  Visibility="{Binding IsSeparator, Converter={StaticResource BoolToVis}, ConverterParameter=Invert}" />
-                        <MenuItem Header="Dock Preferences…" Click="OpenDockPreferences_Click"
-                                  Visibility="{Binding IsSeparator, Converter={StaticResource BoolToVis}}" />
-                    </ContextMenu>
-                </Grid.ContextMenu>
 
                 <!-- Windows Start logo: four tiles -->
                 <Viewbox Visibility="{Binding IsStartMenu, Converter={StaticResource BoolToVis}}">
@@ -74,9 +85,12 @@
                     </Grid>
                 </Viewbox>
 
-                <!-- Separator divider between shortcuts and minimized-window tiles -->
-                <Rectangle Width="2"
-                           HorizontalAlignment="Center"
+                <!-- Separator divider: a 2px line across the bar — vertical on a horizontal dock,
+                     horizontal on a left/right dock (orientation comes from the view-model). -->
+                <Rectangle Width="{Binding DataContext.SeparatorWidth, RelativeSource={RelativeSource AncestorType=Window}}"
+                           Height="{Binding DataContext.SeparatorHeight, RelativeSource={RelativeSource AncestorType=Window}}"
+                           HorizontalAlignment="{Binding DataContext.SeparatorHAlign, RelativeSource={RelativeSource AncestorType=Window}}"
+                           VerticalAlignment="{Binding DataContext.SeparatorVAlign, RelativeSource={RelativeSource AncestorType=Window}}"
                            RadiusX="1" RadiusY="1"
                            Fill="{DynamicResource SeparatorBrush}"
                            Visibility="{Binding IsSeparator, Converter={StaticResource BoolToVis}}" />
@@ -86,13 +100,13 @@
                      outer = 0 10 20 / 0.12, inner = 0 4 8 / 0.18. -->
                 <Grid Visibility="{Binding ShowIconArea, Converter={StaticResource BoolToVis}}">
                     <Grid.Effect>
-                        <DropShadowEffect BlurRadius="20" ShadowDepth="10" Direction="270" Opacity="0.12" Color="#000000" />
+                        <DropShadowEffect BlurRadius="20" ShadowDepth="10" Direction="270" Opacity="{DynamicResource IconShadowOuterOpacity}" Color="#000000" />
                     </Grid.Effect>
                     <Image Source="{Binding Icon}"
                            Stretch="Uniform"
                            RenderOptions.BitmapScalingMode="HighQuality">
                         <Image.Effect>
-                            <DropShadowEffect BlurRadius="8" ShadowDepth="4" Direction="270" Opacity="0.18" Color="#000000" />
+                            <DropShadowEffect BlurRadius="8" ShadowDepth="4" Direction="270" Opacity="{DynamicResource IconShadowInnerOpacity}" Color="#000000" />
                         </Image.Effect>
                     </Image>
                 </Grid>
@@ -127,10 +141,12 @@
                     </Image.Effect>
                 </Image>
 
-                <!-- Running indicator: a dot just below the icon for open taskbar apps -->
+                <!-- Running indicator: a dot on the screen-edge side of the icon for open taskbar apps
+                     (below for Bottom, above for Top, beside for Left/Right) — orientation from the VM. -->
                 <Ellipse Width="4" Height="4"
-                         VerticalAlignment="Bottom" HorizontalAlignment="Center"
-                         Margin="0,0,0,-10"
+                         VerticalAlignment="{Binding DataContext.DotVAlign, RelativeSource={RelativeSource AncestorType=Window}}"
+                         HorizontalAlignment="{Binding DataContext.DotHAlign, RelativeSource={RelativeSource AncestorType=Window}}"
+                         Margin="{Binding DataContext.DotMargin, RelativeSource={RelativeSource AncestorType=Window}}"
                          Fill="{DynamicResource RunningDotBrush}">
                     <Ellipse.Visibility>
                         <MultiBinding Converter="{StaticResource AllTrueToVis}">

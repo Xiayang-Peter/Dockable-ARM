@@ -65,6 +65,22 @@ public static class ShortcutService
         }
     }
 
+    /// <summary>Opens an Explorer window at the file's folder with the file itself selected.</summary>
+    public static void RevealInExplorer(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+        try
+        {
+            // /select, opens the containing folder and highlights the item.
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Dockable] RevealInExplorer failed for '{path}': {ex.Message}");
+        }
+    }
+
     private static string SafeDirectoryOf(string path)
     {
         try { return Path.GetDirectoryName(path) ?? string.Empty; }
@@ -83,6 +99,17 @@ public static class ShortcutService
     {
         if (string.IsNullOrWhiteSpace(path))
             return null;
+
+        // Internet shortcuts (.url) — e.g. Steam game shortcuts — aren't images themselves, so the
+        // shell hands back a blank page icon. Resolve the icon the desktop actually shows by reading
+        // the [InternetShortcut] IconFile / IconIndex and extracting from there.
+        if (path.EndsWith(".url", StringComparison.OrdinalIgnoreCase))
+        {
+            var resolved = LoadUrlShortcutIcon(path, pixelSize);
+            if (resolved is not null)
+                return resolved;
+            // Fall through to the default shell extraction (a blank page beats nothing).
+        }
 
         object? shellItem = null;
         try
@@ -134,6 +161,73 @@ public static class ShortcutService
         {
             if (shellItem is not null && Marshal.IsComObject(shellItem))
                 Marshal.ReleaseComObject(shellItem);
+        }
+    }
+
+    /// <summary>
+    /// Reads an Internet shortcut's (.url) <c>IconFile</c>/<c>IconIndex</c> and extracts that icon —
+    /// the same one Explorer shows on the desktop. Returns null if the .url has no usable icon
+    /// reference (the caller then falls back to the generic shell icon).
+    /// </summary>
+    private static ImageSource? LoadUrlShortcutIcon(string urlPath, int pixelSize)
+    {
+        try
+        {
+            string? iconFile = null;
+            int iconIndex = 0;
+
+            foreach (string raw in File.ReadAllLines(urlPath))
+            {
+                string line = raw.Trim();
+                if (line.StartsWith("IconFile=", StringComparison.OrdinalIgnoreCase))
+                    iconFile = line["IconFile=".Length..].Trim();
+                else if (line.StartsWith("IconIndex=", StringComparison.OrdinalIgnoreCase)
+                         && int.TryParse(line["IconIndex=".Length..].Trim(), out int idx))
+                    iconIndex = idx;
+            }
+
+            if (string.IsNullOrWhiteSpace(iconFile))
+                return null;
+
+            iconFile = Environment.ExpandEnvironmentVariables(iconFile);
+            if (!File.Exists(iconFile))
+                return null;
+
+            // Extract straight from the referenced icon resource (.ico/.exe/.dll at the given index).
+            // We deliberately avoid the IShellItemImageFactory path here: for a raw .ico it returns
+            // the image in an orientation our DIB flip heuristic gets wrong (icons come out upside
+            // down), whereas PrivateExtractIcons + CreateBitmapSourceFromHIcon is orientation-correct.
+            return ExtractIconAtIndex(iconFile, iconIndex, pixelSize);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Dockable] .url icon resolve failed for '{urlPath}': {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>Extracts a single icon at a given index/size from an .exe/.dll/.ico via the shell.</summary>
+    private static unsafe ImageSource? ExtractIconAtIndex(string file, int index, int pixelSize)
+    {
+        uint extracted = PInvoke.PrivateExtractIcons(file, index, pixelSize, pixelSize, out var hicon, null, 1, 0);
+        try
+        {
+            if (extracted == 0 || hicon is null || hicon.IsInvalid)
+                return null;
+
+            var source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
+                hicon.DangerousGetHandle(), Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+            source.Freeze();
+            return source;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Dockable] Icon extract failed for '{file}' [{index}]: {ex.Message}");
+            return null;
+        }
+        finally
+        {
+            hicon?.Dispose(); // the SafeHandle owns the HICON and DestroyIcon's it
         }
     }
 

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Windows;
 using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Dockable.Interop;
@@ -32,6 +33,11 @@ public sealed partial class DockViewModel : ObservableObject
     private readonly Dictionary<string, DockItemViewModel> _appByKey = new();
     private readonly List<DockItemViewModel> _minimizedVms = new();
     private long _appSeq; // monotonic counter stamping each app's first-seen order
+    private bool _appsInitialized; // the first refresh records windows without bouncing (apps already open)
+    private bool _bounceRequested; // set during a refresh when any app gained a window
+
+    /// <summary>Raised after a refresh in which an app launch bounce began, so the view can start its render loop.</summary>
+    public event Action? AnimationRequested;
 
     public DockViewModel(SettingsStore store)
     {
@@ -60,13 +66,76 @@ public sealed partial class DockViewModel : ObservableObject
     /// <summary>Window-Y of the top of a fully-magnified icon (where hover labels anchor above).</summary>
     [ObservableProperty] private double _magnifiedTop;
 
+    /// <summary>True when the dock is on a side edge (Left/Right); items stack vertically.</summary>
+    public bool IsVerticalDock => Settings.Edge is DockEdge.Left or DockEdge.Right;
+
+    // --- Edge-derived layout for per-item template bits (running dot, separator), bound via
+    // RelativeSource to the window's DataContext. Re-notified on edge change by ApplyEdge. ---
+
+    /// <summary>Gap (DIP) between an icon and its running-indicator dot, on the screen-edge side.</summary>
+    private const double DotGap = 10;
+
+    /// <summary>The running dot sits on the screen-edge side of the icon, centered on the other axis.</summary>
+    public VerticalAlignment DotVAlign => Settings.Edge switch
+    {
+        DockEdge.Top => VerticalAlignment.Top,
+        DockEdge.Bottom => VerticalAlignment.Bottom,
+        _ => VerticalAlignment.Center, // Left / Right
+    };
+
+    public HorizontalAlignment DotHAlign => Settings.Edge switch
+    {
+        DockEdge.Left => HorizontalAlignment.Left,
+        DockEdge.Right => HorizontalAlignment.Right,
+        _ => HorizontalAlignment.Center, // Top / Bottom
+    };
+
+    public Thickness DotMargin => Settings.Edge switch
+    {
+        DockEdge.Top => new Thickness(0, -DotGap, 0, 0),
+        DockEdge.Left => new Thickness(-DotGap, 0, 0, 0),
+        DockEdge.Right => new Thickness(0, 0, -DotGap, 0),
+        _ => new Thickness(0, 0, 0, -DotGap), // Bottom
+    };
+
+    // Separator: a 2px line across the bar — vertical for horizontal docks, horizontal for vertical
+    // docks. NaN width/height = Auto, which stretches under the matching Stretch alignment.
+    public double SeparatorWidth => IsVerticalDock ? double.NaN : 2;
+    public double SeparatorHeight => IsVerticalDock ? 2 : double.NaN;
+    public HorizontalAlignment SeparatorHAlign => IsVerticalDock ? HorizontalAlignment.Stretch : HorizontalAlignment.Center;
+    public VerticalAlignment SeparatorVAlign => IsVerticalDock ? VerticalAlignment.Center : VerticalAlignment.Stretch;
+
+    /// <summary>Persists a new dock edge, re-lays out, and notifies the edge-derived view bindings.</summary>
+    public void ApplyEdge(DockEdge edge)
+    {
+        Settings.Edge = edge;
+        Save();
+        RecomputeLayout();
+        OnPropertyChanged(nameof(IsVerticalDock));
+        OnPropertyChanged(nameof(DotVAlign));
+        OnPropertyChanged(nameof(DotHAlign));
+        OnPropertyChanged(nameof(DotMargin));
+        OnPropertyChanged(nameof(SeparatorWidth));
+        OnPropertyChanged(nameof(SeparatorHeight));
+        OnPropertyChanged(nameof(SeparatorHAlign));
+        OnPropertyChanged(nameof(SeparatorVAlign));
+    }
+
     public void RecomputeLayout() => _layout.Recompute();
-    public bool UpdateMagnification(double mouseX, bool hovering) => _layout.Update(mouseX, hovering);
+
+    /// <summary><paramref name="mouseMain"/> is the cursor's main-axis coordinate (window X for a
+    /// horizontal dock, window Y for a vertical one).</summary>
+    public bool UpdateMagnification(double mouseMain, bool hovering) => _layout.Update(mouseMain, hovering);
 
     // --- Live drag-reorder (driven by DockWindow's mouse capture) ---
     public void BeginItemDrag(DockItemViewModel item) => _layout.BeginDrag(item);
     public void EndItemDrag() => _layout.EndDrag();
     public int DragInsertIndex => _layout.DragInsertIndex;
+
+    // --- External (Explorer) file drag: a placeholder gap previews where a drop would land ---
+    public void UpdateExternalDrop(double mouseMain) => _layout.UpdateExternalDrop(mouseMain);
+    public void EndExternalDrop() => _layout.EndExternalDrop();
+    public int ComputeDropIndex(double mouseMain) => _layout.ComputeDropIndex(mouseMain);
 
     /// <summary>Toggles the running-indicator dots (updates the live binding + persists).</summary>
     public void SetShowRunningIndicators(bool show)
@@ -112,6 +181,8 @@ public sealed partial class DockViewModel : ObservableObject
     /// </summary>
     public void RefreshTaskbarApps(uint ownProcessId)
     {
+        _bounceRequested = false;
+
         var pinnedPaths = Settings.PinnedApps ?? new List<string>();
         var windows = TaskbarApps.EnumerateAppWindows(ownProcessId);
         var claimed = new bool[windows.Count];
@@ -165,6 +236,11 @@ public sealed partial class DockViewModel : ObservableObject
         _appVms = desired;
         RefreshRecycleBin();
         ComposeItems();
+
+        // After the first refresh, apps already open are the baseline; subsequent new windows bounce.
+        _appsInitialized = true;
+        if (_bounceRequested)
+            AnimationRequested?.Invoke();
     }
 
     /// <summary>
@@ -192,7 +268,24 @@ public sealed partial class DockViewModel : ObservableObject
         }
 
         vm.LaunchPath = launchPath;
-        vm.Windows = windows is null ? Array.Empty<IntPtr>() : windows.ToArray();
+        var handles = windows ?? (IReadOnlyList<IntPtr>)Array.Empty<IntPtr>();
+
+        // Bounce the icon when the app gains a window it didn't have last refresh (e.g. on launch).
+        // Skipped on the first refresh (apps already open shouldn't all bounce at startup).
+        if (_appsInitialized && Settings.AnimateOpeningApps)
+        {
+            foreach (var h in handles)
+            {
+                if (vm.HasWindow(h))
+                    continue;
+                vm.StartBounce();
+                _bounceRequested = true;
+                break;
+            }
+        }
+        vm.SetKnownWindows(handles);
+
+        vm.Windows = handles is IntPtr[] arr ? arr : handles.ToArray();
         vm.IsRunning = vm.Windows.Count > 0;
         return vm;
     }
@@ -257,6 +350,10 @@ public sealed partial class DockViewModel : ObservableObject
 
     public DockItemViewModel? FindMinimizedWindow(IntPtr hwnd)
         => _minimizedVms.FirstOrDefault(i => i.Hwnd == hwnd);
+
+    /// <summary>The taskbar-app tile (pinned or running) whose window list contains <paramref name="hwnd"/>.</summary>
+    public DockItemViewModel? FindAppForWindow(IntPtr hwnd)
+        => _appVms.FirstOrDefault(a => a.Windows.Contains(hwnd));
 
     // --- Item composition / reconciliation ----------------------------------------------
 

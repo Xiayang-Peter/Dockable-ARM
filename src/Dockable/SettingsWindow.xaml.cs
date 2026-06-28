@@ -26,12 +26,16 @@ public partial class SettingsWindow : Window
 
     private readonly DockViewModel _vm;
     private readonly Action<DockTheme> _setTheme;
+    private readonly Action<DockEdge> _setEdge;
+    private readonly Action<bool> _setHideTaskbar;
     private bool _initializing;
 
-    public SettingsWindow(DockViewModel vm, Action<DockTheme> setTheme)
+    public SettingsWindow(DockViewModel vm, Action<DockTheme> setTheme, Action<DockEdge> setEdge, Action<bool> setHideTaskbar)
     {
         _vm = vm;
         _setTheme = setTheme;
+        _setEdge = setEdge;
+        _setHideTaskbar = setHideTaskbar;
         _initializing = true; // set before InitializeComponent so initial events no-op
         InitializeComponent();
 
@@ -49,9 +53,12 @@ public partial class SettingsWindow : Window
         SizeSlider.Value = Math.Clamp(s.IconSize, SizeMin, SizeMax);
         MagnificationSlider.Value = MagnificationToStep(s);
 
-        PositionCombo.SelectedIndex = (int)s.Edge;   // DockEdge: Bottom, Left, Right, Top
-        MinimizeCombo.SelectedIndex = (int)s.MinimizeEffect; // MinimizeEffect: Genie, Scale
+        PositionCombo.SelectedIndex = (int)s.Edge;   // DockEdge: Bottom, Left, Right, Top (matches combo order)
+        MinimizeCombo.SelectedIndex = (int)s.MinimizeEffect; // MinimizeEffect: Suck, Scale, Genie
+        EffectSpeedSlider.Value = SpeedToSlider(s.EffectSpeed);
         IndicatorsSwitch.IsChecked = s.ShowRunningIndicators;
+        AnimateOpeningSwitch.IsChecked = s.AnimateOpeningApps;
+        MinimizeIntoIconSwitch.IsChecked = s.MinimizeIntoIcon;
         HideTaskbarSwitch.IsChecked = s.HideTaskbar;
 
         _initializing = false;
@@ -95,13 +102,53 @@ public partial class SettingsWindow : Window
     private void IndicatorsSwitch_Click(object sender, RoutedEventArgs e)
         => _vm.SetShowRunningIndicators(IndicatorsSwitch.IsChecked == true);
 
+    // On → the taskbar auto-hides while Dockable runs; off → it stays visible. The dock applies and
+    // persists it (and restores the taskbar to its pre-launch state on close).
+    private void HideTaskbarSwitch_Click(object sender, RoutedEventArgs e)
+        => _setHideTaskbar(HideTaskbarSwitch.IsChecked == true);
+
+    private void AnimateOpeningSwitch_Click(object sender, RoutedEventArgs e)
+    {
+        _vm.Settings.AnimateOpeningApps = AnimateOpeningSwitch.IsChecked == true;
+        _vm.Save();
+    }
+
+    private void MinimizeIntoIconSwitch_Click(object sender, RoutedEventArgs e)
+    {
+        _vm.Settings.MinimizeIntoIcon = MinimizeIntoIconSwitch.IsChecked == true;
+        _vm.Save();
+    }
+
+    // --- Position on screen ---
+
+    private void PositionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing)
+            return;
+        _setEdge((DockEdge)PositionCombo.SelectedIndex); // 0 Bottom, 1 Left, 2 Right, 3 Top
+    }
+
     // --- Minimize effect ---
 
     private void MinimizeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_initializing)
             return;
-        _vm.Settings.MinimizeEffect = (MinimizeEffect)MinimizeCombo.SelectedIndex; // 0 = Genie, 1 = Scale
+        _vm.Settings.MinimizeEffect = (MinimizeEffect)MinimizeCombo.SelectedIndex; // 0 Suck, 1 Scale, 2 Genie
+        _vm.Save();
+    }
+
+    // --- Effect speed ---
+    // Slider runs 0..1 with the default at 0.5 = current speed (1x). Mapping is geometric so the
+    // midpoint is exactly 1x: position 0 → 0.5x (slow), position 1 → 2x (fast).
+    private static double SliderToSpeed(double pos) => Math.Pow(2, (pos - 0.5) * 2);
+    private static double SpeedToSlider(double speed) => Math.Clamp(0.5 + Math.Log2(speed) / 2, 0, 1);
+
+    private void EffectSpeedSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_initializing)
+            return;
+        _vm.Settings.EffectSpeed = SliderToSpeed(e.NewValue);
         _vm.Save();
     }
 

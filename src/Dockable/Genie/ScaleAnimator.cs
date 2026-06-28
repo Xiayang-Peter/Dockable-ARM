@@ -21,6 +21,9 @@ public sealed class ScaleAnimator : IMinimizeAnimator
     private const double DurationMs = 230;
     private const double TargetTileWidth = 56; // nominal landed size at the dock
 
+    /// <summary>Speed multiplier; &gt;1 shortens the duration (faster), &lt;1 lengthens it (slower).</summary>
+    public double SpeedMultiplier { get; set; } = 1.0;
+
     private Window? _overlay;
     private Image? _image;
     private ScaleTransform? _scale;
@@ -115,7 +118,8 @@ public sealed class ScaleAnimator : IMinimizeAnimator
         if (_startTime == TimeSpan.Zero)
             _startTime = now;
 
-        double progress = Math.Min(1.0, (now - _startTime).TotalMilliseconds / DurationMs);
+        double duration = DurationMs / Math.Max(0.1, SpeedMultiplier);
+        double progress = Math.Min(1.0, (now - _startTime).TotalMilliseconds / duration);
         double t = _reverse ? 1.0 - progress : progress;
         ApplyFrame(SmoothStep(t));
 

@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Dockable.Genie;
 using Dockable.Interop;
@@ -25,9 +26,6 @@ public partial class DockWindow : Window
     // Private window message the shell uses to send the dock AppBar notifications.
     private const uint AppBarCallbackMessage = 0x0400 + 1; // WM_USER + 1
     private const int WM_SETTINGCHANGE = 0x001A;           // OS setting changed (incl. light/dark)
-    private const double SliverDip = 2;       // visible strip left peeking when auto-hidden
-    private const int HideDelayMs = 450;      // grace period before auto-hide slides away
-    private const double SlideSmoothing = 0.3;
 
     // Drag ghost geometry (matches the DragGhost popup in XAML): the icon's center sits at
     // (GhostCenterX, GhostCenterY) from the popup's top-left, so it tracks under the cursor.
@@ -40,6 +38,7 @@ public partial class DockWindow : Window
     private SettingsWindow? _settingsWindow; // "Dock Preferences…" window (single instance)
 
     private double _mouseX;
+    private double _mouseY;
     private bool _hovering;
     private bool _renderingHooked;
 
@@ -50,8 +49,10 @@ public partial class DockWindow : Window
 
     private IntPtr _hwnd;
     private AppBarManager? _appBar;
-    private double _alwaysVisibleBottomDip; // bottom edge (DIP) granted by the AppBar reserve
     private bool _windowRegionClipped;      // true while the window is clipped to the resting bar
+
+    /// <summary>True when the dock is on a side edge (Left/Right); the main axis is then screen-Y.</summary>
+    private bool IsVerticalDock => ViewModel?.IsVerticalDock ?? false;
 
     // Keep the bar's drop shadow when the window is clipped to the resting bar.
     private const double DockRegionTopPaddingDip = 26;
@@ -64,16 +65,20 @@ public partial class DockWindow : Window
     private readonly WindowThumbnailCache _thumbnails = new();
     // Windows whose minimize/restore we're currently animating (ignore re-entrant events).
     private readonly HashSet<IntPtr> _busy = new();
-
-    private readonly DispatcherTimer _slideTimer;
-    private readonly DispatcherTimer _hideDelayTimer;
-    private bool _revealed = true;
-    private double _targetTop;
+    // Windows minimized "into" their app icon (no thumbnail tile): hwnd → its capture for restore.
+    private readonly Dictionary<IntPtr, BitmapSource> _iconMinimized = new();
 
     // Mirror the taskbar: poll running apps + watch the pinned folder.
     private readonly uint _ownProcessId = (uint)Environment.ProcessId;
     private readonly DispatcherTimer _appRefreshTimer;
     private FileSystemWatcher? _pinWatcher;
+
+    // While the Start menu (opened from the dock) is up, the taskbar is fully hidden; this watches
+    // for it closing so we can restore the configured taskbar state.
+    private readonly DispatcherTimer _startWatchTimer;
+    private bool _startSeen;       // confirmed the Start menu actually appeared
+    private int _startWatchTicks;  // grace ticks so we never leave the taskbar stuck hidden
+    private const int StartWatchMaxTicks = 12; // ~1.8s for Start to appear before giving up
 
     // Drag to reorder / pin / remove.
     private Point _dragStart;
@@ -89,10 +94,8 @@ public partial class DockWindow : Window
     private const double SizeMax = 64;
     private bool _resizePressed;        // pressed a separator, not yet past the drag threshold
     private bool _separatorResize;      // actively resizing
-    private double _resizeStartCursorY; // physical-px cursor Y at press
+    private double _resizeStartCursorCross; // physical-px cursor coord on the cross axis at press
     private double _resizeStartIconSize;
-
-    private bool AutoHide => ViewModel?.Settings.Behavior == DockBehavior.AutoHide;
 
     public DockWindow()
     {
@@ -106,16 +109,15 @@ public partial class DockWindow : Window
         MouseLeave += OnMouseLeave;
         MouseLeftButtonUp += OnDockMouseUp; // ends a custom drag (no-op for normal clicks)
 
-        _slideTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(15) };
-        _slideTimer.Tick += OnSlideTick;
-        _hideDelayTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(HideDelayMs) };
-        _hideDelayTimer.Tick += OnHideDelayElapsed;
         _appRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _appRefreshTimer.Tick += (_, _) => RefreshTaskbarApps();
 
         _dragSteadyTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(DragSteadyMs) };
         _dragSteadyTimer.Tick += OnDragSteadyElapsed;
         LostMouseCapture += OnLostMouseCapture; // robust cleanup if a drag is interrupted
+
+        _startWatchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        _startWatchTimer.Tick += OnStartWatchTick;
     }
 
     private DockViewModel? ViewModel => DataContext as DockViewModel;
@@ -123,13 +125,24 @@ public partial class DockWindow : Window
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         if (e.OldValue is DockViewModel oldVm)
+        {
             oldVm.PropertyChanged -= OnViewModelPropertyChanged;
+            oldVm.AnimationRequested -= OnAnimationRequested;
+        }
         if (ViewModel is { } vm)
         {
             vm.PropertyChanged += OnViewModelPropertyChanged;
+            vm.AnimationRequested += OnAnimationRequested;
             ApplyWindowSize();
             ApplyTheme(); // paint the bar for the saved theme before the window is shown
         }
+    }
+
+    // An app launch bounce started: unclip so the hop can render above the bar, and run the loop.
+    private void OnAnimationRequested()
+    {
+        ClearWindowRegion();
+        HookRendering();
     }
 
     // --- Light / dark theme ---
@@ -153,7 +166,10 @@ public partial class DockWindow : Window
             Resources["RunningDotBrush"] = Brush("#CCFFFFFF"); // rgba(255,255,255,0.8)
             Resources["FallbackBgBrush"] = Brush("#33FFFFFF");
             Resources["FallbackTextBrush"] = Brush("#FFFFFFFF");
+            Resources["IconShadowOuterOpacity"] = 0.12;
+            Resources["IconShadowInnerOpacity"] = 0.18;
             BarShadow.Opacity = 0.4;
+            DockBackground.BorderThickness = new Thickness(1);
         }
         else
         {
@@ -164,7 +180,10 @@ public partial class DockWindow : Window
             Resources["RunningDotBrush"] = Brush("#B3000000"); // rgba(0,0,0,0.7)
             Resources["FallbackBgBrush"] = Brush("#1F000000");
             Resources["FallbackTextBrush"] = Brush("#CC000000");
+            Resources["IconShadowOuterOpacity"] = 0.24; // more pronounced icon shadows on light glass
+            Resources["IconShadowInnerOpacity"] = 0.32;
             BarShadow.Opacity = 0.15;
+            DockBackground.BorderThickness = new Thickness(2); // thicker border reads better on light glass
         }
     }
 
@@ -259,7 +278,9 @@ public partial class DockWindow : Window
 
     private void RefreshTaskbarApps() => ViewModel?.RefreshTaskbarApps(_ownProcessId);
 
-    /// <summary>Click a taskbar app: focus its window if running, otherwise launch it.</summary>
+    /// <summary>Click a taskbar app: focus its windows if running, otherwise launch it. Minimized
+    /// windows (in a thumbnail tile or into this icon) restore with the animation, one after another
+    /// (only one effect can play at a time); non-minimized windows are just brought forward.</summary>
     private void ActivateOrLaunch(DockItemViewModel app)
     {
         if (app.Windows.Count == 0)
@@ -268,29 +289,33 @@ public partial class DockWindow : Window
             return;
         }
 
-        // Windows minimized into the dock restore with the genie effect (warping out of their
-        // tile); the rest of the group is just brought forward. Only one genie can play at a time
-        // (shared overlay), so if several are minimized, the first genies and the rest restore
-        // instantly — none get left behind.
         var toRaise = new List<IntPtr>();
-        bool geniePlayed = false;
+        var toRestore = new List<(IntPtr Hwnd, DockItemViewModel? Tile, BitmapSource? Bitmap)>();
         foreach (var hwnd in app.Windows)
         {
             var tile = ViewModel?.FindMinimizedWindow(hwnd);
-            if (tile is null)
-                toRaise.Add(hwnd);
-            else if (!geniePlayed)
-            {
-                RestoreMinimized(tile);
-                geniePlayed = true;
-            }
+            if (tile is not null)
+                toRestore.Add((hwnd, tile, tile.Icon as BitmapSource));               // minimized as a tile
+            else if (WindowControl.IsIconic(hwnd))
+                toRestore.Add((hwnd, null, _iconMinimized.GetValueOrDefault(hwnd)
+                    ?? _thumbnails.TryGet(hwnd)?.Bitmap));                              // minimized into the icon
             else
-            {
-                RestoreMinimizedInstant(tile);
-            }
+                toRaise.Add(hwnd);
         }
+
         if (toRaise.Count > 0)
             WindowControl.ActivateAll(toRaise);
+        RestoreNext(app, toRestore, 0);
+    }
+
+    /// <summary>Restores the queued minimized windows one at a time, chaining each animation to the next.</summary>
+    private void RestoreNext(DockItemViewModel app, List<(IntPtr Hwnd, DockItemViewModel? Tile, BitmapSource? Bitmap)> queue, int index)
+    {
+        if (index >= queue.Count)
+            return;
+        var (hwnd, tile, bitmap) = queue[index];
+        Point target = tile is not null ? TileScreenCenter(tile) : TileScreenCenter(app);
+        RestoreWindowAnimated(hwnd, tile, target, bitmap, () => RestoreNext(app, queue, index + 1));
     }
 
     private void ApplyTaskbarVisibility()
@@ -303,48 +328,49 @@ public partial class DockWindow : Window
         Taskbar.SetAutoHide(ViewModel.Settings.HideTaskbar);
     }
 
-    /// <summary>
-    /// Centers the dock horizontally on the work area and anchors it to the bottom edge.
-    /// In auto-hide mode the vertical target alternates between revealed and a thin sliver.
-    /// </summary>
+    /// <summary>Anchors the dock flush to its monitor's docked edge, centered along the other axis.</summary>
     private void PositionDock()
     {
-        var (left, shownTop, hiddenTop) = ComputePlacement();
+        var (left, top) = ComputePlacement();
         Left = left;
-        _targetTop = (AutoHide && !_revealed) ? hiddenTop : shownTop;
-
-        // When not animating, snap straight to the target.
-        if (!_slideTimer.IsEnabled)
-            Top = _targetTop;
+        Top = top;
     }
 
-    private (double Left, double ShownTop, double HiddenTop) ComputePlacement()
+    private (double Left, double Top) ComputePlacement()
     {
         double height = ActualHeight > 0 ? ActualHeight : (ViewModel?.WindowHeight ?? 0);
         double width = ActualWidth > 0 ? ActualWidth : (ViewModel?.WindowWidth ?? 0);
-        bool hideTaskbar = ViewModel?.Settings.HideTaskbar ?? false;
+        var edge = ViewModel?.Settings.Edge ?? DockEdge.Bottom;
 
-        // Always-visible: center on the dock's monitor. When the taskbar is hidden, anchor to
-        // the full monitor bottom (the freed space); otherwise to the AppBar's granted strip
-        // (deterministic — avoids the asynchronous work-area shrink after ABM_SETPOS).
-        if (!AutoHide && _appBar?.IsRegistered == true && _hwnd != IntPtr.Zero)
+        // Monitor bounds (DIP) for the screen the dock currently sits on.
+        double mLeft, mTop, mWidth, mHeight;
+        if (_hwnd != IntPtr.Zero)
         {
             var info = Monitors.ForWindow(_hwnd);
             double scale = info.Scale;
-            double left = info.MonitorPx.Left / scale + (info.MonitorPx.Width / scale - width) / 2;
-            double bottom = hideTaskbar ? info.MonitorPx.Bottom / scale : _alwaysVisibleBottomDip;
-            double shownTop = bottom - height;
-            return (left, shownTop, shownTop);
+            mLeft = info.MonitorPx.Left / scale;
+            mTop = info.MonitorPx.Top / scale;
+            mWidth = info.MonitorPx.Width / scale;
+            mHeight = info.MonitorPx.Height / scale;
+        }
+        else // before the HWND exists: fall back to the primary screen
+        {
+            mLeft = 0;
+            mTop = 0;
+            mWidth = SystemParameters.PrimaryScreenWidth;
+            mHeight = SystemParameters.PrimaryScreenHeight;
         }
 
-        // Auto-hide: center on the primary work area. With the taskbar hidden, drop to the full
-        // screen bottom so the dock sits flush at the edge rather than above the taskbar's gap.
-        var work = SystemParameters.WorkArea;
-        double screenBottom = hideTaskbar ? SystemParameters.PrimaryScreenHeight : work.Bottom;
-        double autoLeft = work.Left + (work.Width - width) / 2;
-        double autoShownTop = screenBottom - height;
-        double autoHiddenTop = screenBottom - SliverDip;
-        return (autoLeft, autoShownTop, autoHiddenTop);
+        // Anchor flush to the docked edge; center along the perpendicular axis. The AppBar reserves
+        // the strip so other windows don't overlap (when the taskbar is hidden the work area is full,
+        // so the monitor edge is the freed space).
+        return edge switch
+        {
+            DockEdge.Top => (mLeft + (mWidth - width) / 2, mTop),
+            DockEdge.Left => (mLeft, mTop + (mHeight - height) / 2),
+            DockEdge.Right => (mLeft + mWidth - width, mTop + (mHeight - height) / 2),
+            _ => (mLeft + (mWidth - width) / 2, mTop + mHeight - height), // Bottom
+        };
     }
 
     // --- Magnification render loop ---
@@ -354,11 +380,14 @@ public partial class DockWindow : Window
         if (_resizePressed || _separatorResize)
         {
             _hovering = true; // keep the dock revealed while resizing
-            HandleSeparatorResize(PointToScreen(e.GetPosition(this)).Y);
+            var sp = PointToScreen(e.GetPosition(this));
+            HandleSeparatorResize(IsVerticalDock ? sp.X : sp.Y); // resize is along the cross axis
             return;
         }
 
-        _mouseX = e.GetPosition(this).X;
+        var p = e.GetPosition(this);
+        _mouseX = p.X;
+        _mouseY = p.Y;
         _lastCursor = e.GetPosition(RootCanvas);
         _hovering = true;
         HookRendering();
@@ -475,15 +504,24 @@ public partial class DockWindow : Window
 
     // --- Separator drag = resize the dock (the Size setting) ---
 
-    // screenY is the cursor's screen-Y in device px (PointToScreen stays correct even as the dock
-    // window moves upward while growing).
-    private void HandleSeparatorResize(double screenY)
+    // screenCross is the cursor's screen coord on the cross axis in device px (Y for a horizontal
+    // dock, X for a vertical one). PointToScreen stays correct even as the dock window moves while
+    // growing. The dock grows when dragging away from the docked edge (into the depth).
+    private void HandleSeparatorResize(double screenCross)
     {
         if (ViewModel is null)
             return;
 
-        double dpiY = VisualTreeHelper.GetDpi(this).DpiScaleY;
-        double deltaDip = (_resizeStartCursorY - screenY) / dpiY; // dragging up = larger
+        var dpi = VisualTreeHelper.GetDpi(this);
+        double dpiScale = IsVerticalDock ? dpi.DpiScaleX : dpi.DpiScaleY;
+        double rawDelta = ViewModel.Settings.Edge switch
+        {
+            DockEdge.Top => screenCross - _resizeStartCursorCross,  // drag down = larger
+            DockEdge.Left => screenCross - _resizeStartCursorCross, // drag right = larger
+            DockEdge.Right => _resizeStartCursorCross - screenCross, // drag left = larger
+            _ => _resizeStartCursorCross - screenCross,             // Bottom: drag up = larger
+        };
+        double deltaDip = rawDelta / dpiScale;
 
         if (!_separatorResize)
         {
@@ -493,7 +531,7 @@ public partial class DockWindow : Window
             _resizePressed = false;
             _hoveredItem = null;       // suppress the hover label during a resize
             CaptureMouse();
-            Cursor = Cursors.SizeNS;
+            Cursor = IsVerticalDock ? Cursors.SizeWE : Cursors.SizeNS;
         }
 
         double newSize = Math.Round(Math.Clamp(_resizeStartIconSize + deltaDip, SizeMin, SizeMax));
@@ -548,6 +586,7 @@ public partial class DockWindow : Window
         if (ViewModel is not null && item is not null)
         {
             bool removable = IsRemovable(item);
+            bool unpinnedApp = item is { IsTaskbarApp: true, IsPinned: false };
             var pos = e.GetPosition(RootCanvas);
             bool overDock = pos.X >= 0 && pos.Y >= 0 && pos.X <= ActualWidth && pos.Y <= ActualHeight;
 
@@ -555,7 +594,9 @@ public partial class DockWindow : Window
                 ViewModel.UnpinApp(item.LaunchPath);                            // hold-to-Remove
             else if (removable && overDock)
                 ViewModel.MovePin(item.LaunchPath, ViewModel.DragInsertIndex);  // reorder pins
-            // Otherwise (unpinned app, minimized window, or dropped away): no change → snaps back.
+            else if (unpinnedApp && overDock)
+                ViewModel.PinApp(item.LaunchPath, ViewModel.DragInsertIndex);   // pin a running app where dropped
+            // Otherwise (minimized window, or dropped away): no change → snaps back.
 
             ViewModel.EndItemDrag();    // the in-canvas tile reappears and settles to its slot
             RefreshTaskbarApps();
@@ -591,8 +632,6 @@ public partial class DockWindow : Window
         _hovering = true;
         ClearWindowRegion(); // un-clip so magnified icons can render above the bar and stay clickable
         HookRendering();
-        if (AutoHide)
-            SlideIn();
     }
 
     private void OnMouseLeave(object sender, MouseEventArgs e)
@@ -600,83 +639,21 @@ public partial class DockWindow : Window
         // Keep the loop running so the dock eases back to rest, then it self-detaches.
         _hovering = false;
         _hoveredItem = null; // hide the hover label once the cursor leaves the dock
-        // Don't auto-hide mid-drag/resize: the cursor legitimately roams off the dock then.
-        if (AutoHide && !_dragInitiated && !_separatorResize)
-            _hideDelayTimer.Start(); // grace period, then slide away
     }
 
-    // --- Auto-hide slide ---
-
-    private void SlideIn()
-    {
-        _hideDelayTimer.Stop();
-        if (_revealed)
-            return;
-        _revealed = true;
-        StartSlideToTarget();
-    }
-
-    private void SlideOut()
-    {
-        if (!_revealed)
-            return;
-        _revealed = false;
-        StartSlideToTarget();
-    }
-
-    private void OnHideDelayElapsed(object? sender, EventArgs e)
-    {
-        _hideDelayTimer.Stop();
-        // Don't hide if the cursor wandered back over the dock in the meantime.
-        if (!IsMouseOver)
-            SlideOut();
-    }
-
-    private void StartSlideToTarget()
-    {
-        var (_, shownTop, hiddenTop) = ComputePlacement();
-        _targetTop = _revealed ? shownTop : hiddenTop;
-        if (!_slideTimer.IsEnabled)
-            _slideTimer.Start();
-    }
-
-    private void OnSlideTick(object? sender, EventArgs e)
-    {
-        double delta = _targetTop - Top;
-        if (Math.Abs(delta) < 0.5)
-        {
-            Top = _targetTop;
-            _slideTimer.Stop();
-            return;
-        }
-        Top += delta * SlideSmoothing;
-    }
-
-    // --- Docking behavior (always-visible reserve vs auto-hide) ---
+    // --- Docking behavior (always-visible: reserve a strip via the AppBar) ---
 
     private void ApplyBehavior()
     {
         if (_hwnd == IntPtr.Zero || ViewModel is null)
             return;
 
-        _hideDelayTimer.Stop();
-        _slideTimer.Stop();
+        // Reserve a strip so other windows don't overlap the resting bar.
+        ReserveAppBarSpace();
+        PositionDock();
+        _appBar?.NotifyPosChanged();
 
-        if (AutoHide)
-        {
-            _appBar?.Unregister();
-            _revealed = false; // start tucked away; reveal on edge hover
-            PositionDock();
-        }
-        else // AlwaysVisible: reserve a strip so other windows don't overlap the bar
-        {
-            ReserveAppBarSpace();
-            _revealed = true;
-            PositionDock();
-            _appBar?.NotifyPosChanged();
-        }
-
-        ApplyIdleRegion(); // AlwaysVisible → clip to the bar; AutoHide → cleared (sliver stays live)
+        ApplyIdleRegion(); // clip to the resting bar so the overflow area stays click-through
     }
 
     private void ReserveAppBarSpace()
@@ -684,39 +661,53 @@ public partial class DockWindow : Window
         if (_appBar is null || ViewModel is null)
             return;
 
-        double thicknessDip = ViewModel.BarHeight > 0 ? ViewModel.BarHeight : 64;
+        // The reserved strip's thickness is the bar's cross dimension: its height for a horizontal
+        // dock, its width for a vertical one.
+        double thicknessDip = ViewModel.IsVerticalDock ? ViewModel.BarWidth : ViewModel.BarHeight;
+        if (thicknessDip <= 0)
+            thicknessDip = 64;
         var info = Monitors.ForWindow(_hwnd);
         int thicknessPx = (int)Math.Round(thicknessDip * info.Scale);
 
         _appBar.Register();
-        var granted = _appBar.ReserveBottom(info.MonitorPx, thicknessPx);
-        _alwaysVisibleBottomDip = (granted.Y + granted.Height) / info.Scale;
+        _appBar.ReserveEdge(ViewModel.Settings.Edge, info.MonitorPx, thicknessPx);
     }
 
     /// <summary>
-    /// When the dock is idle in AlwaysVisible mode, clips the window down to the resting bar so the
-    /// magnification-overflow area above it is click-through (the AppBar only reserves the resting
-    /// bar; the taller window must not block windows underneath). Cleared while hovering so the
-    /// magnified icons render above the bar and stay clickable. In AutoHide the whole window stays
-    /// hit-testable (the edge sliver triggers the reveal), so no clip is applied.
+    /// When the dock is idle, clips the window down to the resting bar so the magnification-overflow
+    /// area above it is click-through (the AppBar only reserves the resting bar; the taller window
+    /// must not block windows underneath). Cleared while hovering so the magnified icons render above
+    /// the bar and stay clickable.
     /// </summary>
     private void ApplyIdleRegion()
     {
         if (_hwnd == IntPtr.Zero || ViewModel is null)
             return;
-        if (AutoHide || _hovering || ViewModel.WindowWidth <= 0 || ViewModel.WindowHeight <= 0)
+        if (_hovering || ViewModel.WindowWidth <= 0 || ViewModel.WindowHeight <= 0)
         {
             ClearWindowRegion();
             return;
         }
 
         var dpi = VisualTreeHelper.GetDpi(this);
-        double topDip = Math.Max(0, ViewModel.BarTop - DockRegionTopPaddingDip);
-        int top = (int)Math.Floor(topDip * dpi.DpiScaleY);
-        int right = (int)Math.Ceiling(ViewModel.WindowWidth * dpi.DpiScaleX);
-        int bottom = (int)Math.Ceiling(ViewModel.WindowHeight * dpi.DpiScaleY) + 1;
+        double pad = DockRegionTopPaddingDip; // keep the bar's drop shadow
+        // Keep the strip from the screen edge through the bar (+shadow pad); clip the magnification
+        // overflow that bleeds away from the docked edge so it stays click-through.
+        double l = 0, t = 0, r = ViewModel.WindowWidth, b = ViewModel.WindowHeight;
+        switch (ViewModel.Settings.Edge)
+        {
+            case DockEdge.Top: b = ViewModel.BarTop + ViewModel.BarHeight + pad; break;
+            case DockEdge.Left: r = ViewModel.BarLeft + ViewModel.BarWidth + pad; break;
+            case DockEdge.Right: l = Math.Max(0, ViewModel.BarLeft - pad); break;
+            default: t = Math.Max(0, ViewModel.BarTop - pad); break; // Bottom
+        }
 
-        var region = PInvoke.CreateRectRgn(0, top, right, bottom);
+        int left = (int)Math.Floor(l * dpi.DpiScaleX);
+        int top = (int)Math.Floor(t * dpi.DpiScaleY);
+        int right = (int)Math.Ceiling(r * dpi.DpiScaleX) + 1;
+        int bottom = (int)Math.Ceiling(b * dpi.DpiScaleY) + 1;
+
+        var region = PInvoke.CreateRectRgn(left, top, right, bottom);
         PInvoke.SetWindowRgn((HWND)_hwnd, region, true); // the window takes ownership of the region
         _windowRegionClipped = true;
     }
@@ -730,13 +721,12 @@ public partial class DockWindow : Window
         _windowRegionClipped = false;
     }
 
-    private void SetBehavior(DockBehavior behavior)
+    private void SetEdge(DockEdge edge)
     {
-        if (ViewModel is null || ViewModel.Settings.Behavior == behavior)
+        if (ViewModel is null || ViewModel.Settings.Edge == edge)
             return;
-        ViewModel.Settings.Behavior = behavior;
-        ViewModel.Save();
-        ApplyBehavior();
+        ViewModel.ApplyEdge(edge); // persist, re-lay out, and notify edge-derived view bindings
+        ApplyBehavior();           // move the AppBar reservation, reposition, and re-clip
     }
 
     private void SetHideTaskbar(bool hide)
@@ -765,8 +755,7 @@ public partial class DockWindow : Window
             {
                 case PInvoke.ABN_POSCHANGED:
                     // The taskbar or another appbar moved; re-reserve and reposition.
-                    if (!AutoHide)
-                        ReserveAppBarSpace();
+                    ReserveAppBarSpace();
                     PositionDock();
                     handled = true;
                     break;
@@ -780,14 +769,33 @@ public partial class DockWindow : Window
 
     // --- Minimize → dock tile, and tile click → restore (genie or scale per the setting) ---
 
-    /// <summary>The minimize/restore animator selected by <see cref="MinimizeEffect"/>.</summary>
-    private IMinimizeAnimator MinimizeAnimator =>
-        ViewModel?.Settings.MinimizeEffect == MinimizeEffect.Scale ? _scale : _genie;
+    /// <summary>The minimize/restore animator selected by <see cref="MinimizeEffect"/>. Suck and Genie
+    /// share the mesh animator, differing only in its <see cref="GenieAnimator.Style"/> curve.</summary>
+    private IMinimizeAnimator MinimizeAnimator
+    {
+        get
+        {
+            var effect = ViewModel?.Settings.MinimizeEffect ?? MinimizeEffect.Genie;
+            double speed = ViewModel?.Settings.EffectSpeed ?? 1.0;
+            if (effect == MinimizeEffect.Scale)
+            {
+                _scale.SpeedMultiplier = speed;
+                return _scale;
+            }
+            _genie.Style = effect == MinimizeEffect.Genie
+                ? GenieAnimator.GenieStyle.Genie
+                : GenieAnimator.GenieStyle.Suck;
+            _genie.SpeedMultiplier = speed;
+            return _genie;
+        }
+    }
 
-    /// <summary>A real window started minimizing: capture it, add a dock tile, and animate into it.</summary>
+    /// <summary>A real window started minimizing: capture it, then warp it into its app icon (when
+    /// "minimize into icon" is on and the app has a dock icon) or into a new thumbnail tile.</summary>
     private void OnWindowMinimizing(IntPtr hwnd)
     {
-        if (ViewModel is null || _busy.Contains(hwnd) || ViewModel.FindMinimizedWindow(hwnd) is not null)
+        if (ViewModel is null || _busy.Contains(hwnd) || ViewModel.FindMinimizedWindow(hwnd) is not null
+            || _iconMinimized.ContainsKey(hwnd))
             return;
         _busy.Add(hwnd);
 
@@ -806,21 +814,48 @@ public partial class DockWindow : Window
         var sourceDip = ToDip(capture.Value.ScreenRectPx, info.Scale);
         var monitorDip = ToDip(info.MonitorPx, info.Scale);
 
-        // Put the captured image exactly where the window was so the spot is never empty between the
-        // real window vanishing and the effect. This also uploads the texture now.
         var animator = MinimizeAnimator;
-        animator.ShowAtSource(capture.Value.Bitmap, sourceDip, monitorDip);
         var bitmap = capture.Value.Bitmap;
 
-        // Defer the heavier tile/relayout + animation start until just after a render pass, so the
-        // held capture actually paints first (no empty gap), then the warp begins from it.
+        // "Minimize into icon": warp into the app's dock icon (pinned or running) instead of a separate
+        // thumbnail tile. Only when an app icon actually exists for this window — otherwise fall back
+        // to a thumbnail tile (resolved in the deferred step below).
+        var appTile = ViewModel.Settings.MinimizeIntoIcon ? ViewModel.FindAppForWindow(hwnd) : null;
+
+        // The minimize-start event only reaches us AFTER the OS has already minimized the window —
+        // it can't be intercepted earlier without injecting a hook into every other process. So undo
+        // the minimize immediately (instant: transitions are suppressed) and keep the real window on
+        // screen as the animation's frame 0. We minimize it exactly once — behind the overlay, when
+        // the warp is ready — so the spot is never empty (no "blink").
+        bool wasMinimized = WindowControl.IsIconic(hwnd);
+        if (wasMinimized)
+            WindowControl.ShowNoActivate(hwnd);
+
+        // Bring the overlay up now (same image, same spot) so it paints in this render pass while the
+        // real window still fills the spot underneath it.
+        animator.ShowAtSource(bitmap, sourceDip, monitorDip);
+
+        // After that render pass the overlay covers the spot, so we can minimize the real window
+        // behind it and start the warp — a single, seamless handoff.
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
-            var tile = ViewModel.AddMinimizedWindow(hwnd, bitmap, TaskbarApps.GetWindowTitle(hwnd));
-            LoadOverlayIcon(tile, hwnd);
-            if (AutoHide)
-                SlideIn(); // reveal so the tile is visible
-            animator.AnimateTo(TileScreenCenter(tile), reverse: false, onCompleted: () => _busy.Remove(hwnd));
+            if (wasMinimized)
+                WindowControl.MinimizeNoActivate(hwnd);
+
+            Point target;
+            if (appTile is not null)
+            {
+                // Into the app icon: remember the capture so the icon click can warp it back out.
+                _iconMinimized[hwnd] = bitmap;
+                target = TileScreenCenter(appTile);
+            }
+            else
+            {
+                var tile = ViewModel.AddMinimizedWindow(hwnd, bitmap, TaskbarApps.GetWindowTitle(hwnd));
+                LoadOverlayIcon(tile, hwnd);
+                target = TileScreenCenter(tile);
+            }
+            animator.AnimateTo(target, reverse: false, onCompleted: () => _busy.Remove(hwnd));
         });
     }
 
@@ -835,14 +870,38 @@ public partial class DockWindow : Window
 
     /// <summary>A minimized-window tile was clicked: reverse-warp out and restore the window.</summary>
     private void RestoreMinimized(DockItemViewModel tile)
+        => RestoreWindowAnimated(tile.Hwnd, tile, TileScreenCenter(tile), tile.Icon as BitmapSource, static () => { });
+
+    /// <summary>
+    /// Restores one minimized window, reverse-warping out of <paramref name="target"/> (its tile or
+    /// app icon), then runs <paramref name="onDone"/> (used to chain a sequential group restore).
+    /// Falls back to a plain restore when there's no captured bitmap to animate.
+    /// </summary>
+    private void RestoreWindowAnimated(IntPtr hwnd, DockItemViewModel? tile, Point target, BitmapSource? bitmap, Action onDone)
     {
-        IntPtr hwnd = tile.Hwnd;
         if (ViewModel is null || _busy.Contains(hwnd))
+        {
+            onDone();
             return;
+        }
 
         if (!WindowControl.IsWindow(hwnd))
         {
-            ViewModel.RemoveMinimizedWindow(tile); // window is gone; drop the stale tile
+            // Window is gone; drop any stale tile / tracking and move on.
+            if (tile is not null)
+                ViewModel.RemoveMinimizedWindow(tile);
+            _iconMinimized.Remove(hwnd);
+            onDone();
+            return;
+        }
+
+        if (bitmap is null)
+        {
+            WindowControl.Restore(hwnd);
+            if (tile is not null)
+                ViewModel.RemoveMinimizedWindow(tile);
+            _iconMinimized.Remove(hwnd);
+            onDone();
             return;
         }
 
@@ -853,35 +912,16 @@ public partial class DockWindow : Window
         var restoreRectPx = WindowControl.GetRestoreRect(hwnd) ?? new Int32Rect(0, 0, 600, 400);
         var windowDip = ToDip(restoreRectPx, info.Scale);
         var monitorDip = ToDip(info.MonitorPx, info.Scale);
-        var tileCenter = TileScreenCenter(tile);
 
-        var bitmap = tile.Icon as System.Windows.Media.Imaging.BitmapSource;
-        if (bitmap is null)
+        MinimizeAnimator.Play(bitmap, windowDip, target, monitorDip, reverse: true, onCompleted: () =>
         {
             WindowControl.Restore(hwnd);
-            ViewModel.RemoveMinimizedWindow(tile);
+            if (tile is not null)
+                ViewModel.RemoveMinimizedWindow(tile);
+            _iconMinimized.Remove(hwnd);
             _busy.Remove(hwnd);
-            return;
-        }
-
-        MinimizeAnimator.Play(bitmap, windowDip, tileCenter, monitorDip, reverse: true, onCompleted: () =>
-        {
-            WindowControl.Restore(hwnd);
-            ViewModel.RemoveMinimizedWindow(tile);
-            _busy.Remove(hwnd);
+            onDone();
         });
-    }
-
-    /// <summary>Restores a minimized-window tile without the genie (used for extra windows in a
-    /// group click, since only one genie can play at once).</summary>
-    private void RestoreMinimizedInstant(DockItemViewModel tile)
-    {
-        IntPtr hwnd = tile.Hwnd;
-        if (ViewModel is null || _busy.Contains(hwnd))
-            return;
-        if (WindowControl.IsWindow(hwnd))
-            WindowControl.Restore(hwnd);
-        ViewModel.RemoveMinimizedWindow(tile);
     }
 
     private static Rect ToDip(Int32Rect r, double scale)
@@ -890,17 +930,18 @@ public partial class DockWindow : Window
     private static Rect ToDip(Rect r, double scale)
         => new(r.Left / scale, r.Top / scale, r.Width / scale, r.Height / scale);
 
-    /// <summary>Screen-space (DIP) center of a tile, using the dock's shown (not hidden) position.</summary>
+    /// <summary>Screen-space (DIP) center of a tile.</summary>
     private Point TileScreenCenter(DockItemViewModel tile)
     {
-        var (left, shownTop, _) = ComputePlacement();
-        return new Point(left + tile.X + tile.RenderSize / 2, shownTop + tile.Y + tile.RenderSize / 2);
+        var (left, top) = ComputePlacement();
+        return new Point(left + tile.X + tile.RenderSize / 2, top + tile.Y + tile.RenderSize / 2);
     }
 
     private void OnRendering(object? sender, EventArgs e)
     {
         // Suppress magnification while resizing via a separator (icons stay at the new resting size).
-        bool animating = ViewModel?.UpdateMagnification(_mouseX, _hovering && !_separatorResize) ?? false;
+        double mouseMain = IsVerticalDock ? _mouseY : _mouseX;
+        bool animating = ViewModel?.UpdateMagnification(mouseMain, _hovering && !_separatorResize) ?? false;
         UpdateHoverLabel(); // track the hovered icon's live center each frame
         if (!animating && !_hovering)
         {
@@ -937,7 +978,8 @@ public partial class DockWindow : Window
         if (item is { IsSeparator: true } && ViewModel is not null)
         {
             _resizePressed = true;
-            _resizeStartCursorY = PointToScreen(e.GetPosition(this)).Y;
+            var sp = PointToScreen(e.GetPosition(this));
+            _resizeStartCursorCross = IsVerticalDock ? sp.X : sp.Y;
             _resizeStartIconSize = ViewModel.Settings.IconSize;
             _dragCandidate = null;
             return;
@@ -966,7 +1008,10 @@ public partial class DockWindow : Window
     private void UpdateHoverLabel()
     {
         var item = _hoveredItem;
-        if (item is null || _dragInitiated || _separatorResize || ViewModel is null || !item.ShowLabel)
+        // The label popup (downward arrow, MagnifiedTop anchor) is tuned for the Bottom edge; suppress
+        // it on the other edges for now rather than render it in the wrong place. TODO: per-edge labels.
+        if (item is null || _dragInitiated || _separatorResize || ViewModel is null || !item.ShowLabel
+            || ViewModel.Settings.Edge != DockEdge.Bottom)
         {
             if (LabelPopup.IsOpen)
                 LabelPopup.IsOpen = false;
@@ -1030,21 +1075,197 @@ public partial class DockWindow : Window
             RestoreMinimized(item);
         else if (item.IsTaskbarApp)
             ActivateOrLaunch(item);
+        else if (item.IsStartMenu)
+            OpenStartMenu();
         else
-            item.Activate(); // Start tile
+            item.Activate(); // shortcut / Recycle Bin
     }
 
-    private void UnpinItem_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Opens the Start menu from the dock and fully hides the taskbar while it's up — overriding
+    /// auto-hide so the taskbar can't reveal itself alongside Start. The configured taskbar state is
+    /// restored once Start closes (watched by <see cref="OnStartWatchTick"/>).
+    /// </summary>
+    private void OpenStartMenu()
     {
-        if (sender is FrameworkElement { DataContext: DockItemViewModel item } && ViewModel is not null)
+        Taskbar.Hide();   // override auto-hide: keep the taskbar fully hidden while Start is open
+        StartMenu.Open(); // synthesize the Win key
+        _startSeen = false;
+        _startWatchTicks = 0;
+        _startWatchTimer.Start();
+    }
+
+    private void OnStartWatchTick(object? sender, EventArgs e)
+    {
+        _startWatchTicks++;
+        if (StartMenu.IsOpen())
         {
-            ViewModel.UnpinApp(item.LaunchPath);
-            RefreshTaskbarApps();
+            _startSeen = true; // Start is up — keep the taskbar hidden
+            return;
+        }
+
+        // Start isn't showing. Restore once we've actually seen it open (the user dismissed it), or
+        // after the grace period if it never appeared, so the taskbar is never left stuck hidden.
+        if (_startSeen || _startWatchTicks >= StartWatchMaxTicks)
+        {
+            _startWatchTimer.Stop();
+            ApplyTaskbarVisibility(); // back to the configured auto-hide / visible state
         }
     }
 
-    // Opened from a separator's right-click menu or the tray menu.
-    private void OpenDockPreferences_Click(object sender, RoutedEventArgs e) => OpenDockPreferences();
+    // --- Per-item right-click context menus (built in code for live state / Alt handling) ---
+
+    private void DockItem_RightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: DockItemViewModel item } target || ViewModel is null)
+            return;
+
+        ContextMenu? menu = item switch
+        {
+            { IsTaskbarApp: true } => BuildAppMenu(item),
+            { IsSeparator: true } => BuildSeparatorMenu(),
+            _ => null,
+        };
+        if (menu is null)
+            return;
+
+        menu.PlacementTarget = target;
+        menu.Placement = PlacementMode.MousePoint;
+        menu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    // Separator menu: dock-wide actions (matches the old shared menu).
+    private ContextMenu BuildSeparatorMenu()
+    {
+        var menu = new ContextMenu();
+        var prefs = new MenuItem { Header = "Dock Preferences…" };
+        prefs.Click += (_, _) => OpenDockPreferences();
+        menu.Items.Add(prefs);
+        menu.Items.Add(new Separator());
+        var exit = new MenuItem { Header = "Exit" };
+        exit.Click += (_, _) => Application.Current.Shutdown();
+        menu.Items.Add(exit);
+        return menu;
+    }
+
+    // Open/pinned app menu: Options ▶ (Keep in Dock / Open at Login / Show in Explorer), then — for
+    // running apps — Show All Windows and Quit (Force Quit while Alt is held).
+    private ContextMenu BuildAppMenu(DockItemViewModel app)
+    {
+        var menu = new ContextMenu();
+
+        // New Window: launch another instance of the app (most apps open a fresh window).
+        var newWindow = new MenuItem { Header = "New Window" };
+        newWindow.Click += (_, _) => ShortcutService.Launch(app.LaunchPath);
+        menu.Items.Add(newWindow);
+        menu.Items.Add(new Separator());
+
+        var options = new MenuItem { Header = "Options" };
+
+        var keep = new MenuItem { Header = "Keep in Dock", IsCheckable = true, IsChecked = app.IsPinned };
+        keep.Click += (_, _) =>
+        {
+            if (app.IsPinned)
+                ViewModel!.UnpinApp(app.LaunchPath);
+            else
+                ViewModel!.PinApp(app.LaunchPath, int.MaxValue); // append to the pinned list
+            RefreshTaskbarApps();
+        };
+        options.Items.Add(keep);
+
+        string exe = ResolveExecutable(app);
+        string startupName = StartupEntryName(app, exe);
+        var login = new MenuItem { Header = "Open at Login", IsCheckable = true, IsChecked = StartupManager.IsEnabled(startupName) };
+        login.Click += (_, _) =>
+        {
+            if (StartupManager.IsEnabled(startupName))
+                StartupManager.Disable(startupName);
+            else
+                StartupManager.Enable(startupName, exe);
+        };
+        options.Items.Add(login);
+
+        var reveal = new MenuItem { Header = "Show in Explorer" };
+        reveal.Click += (_, _) => ShortcutService.RevealInExplorer(app.LaunchPath);
+        options.Items.Add(reveal);
+
+        menu.Items.Add(options);
+
+        // Running-app actions only make sense when the app has open windows.
+        if (app.Windows.Count > 0)
+        {
+            menu.Items.Add(new Separator());
+
+            var showAll = new MenuItem { Header = "Show All Windows" };
+            showAll.Click += (_, _) => ActivateOrLaunch(app);
+            menu.Items.Add(showAll);
+
+            var quit = new MenuItem();
+            SetQuitHeader(quit, AltHeld);
+            quit.Click += (_, _) => QuitApp(app, force: AltHeld);
+            menu.Items.Add(quit);
+
+            // Live-toggle the Quit / Force Quit label as Alt is pressed/released with the menu open.
+            menu.PreviewKeyDown += (_, _) => SetQuitHeader(quit, AltHeld);
+            menu.PreviewKeyUp += (_, _) => SetQuitHeader(quit, AltHeld);
+        }
+
+        return menu;
+    }
+
+    private static bool AltHeld => (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
+
+    private static void SetQuitHeader(MenuItem item, bool force) => item.Header = force ? "Force Quit" : "Quit";
+
+    /// <summary>The app's executable path (from a running window if possible, else its launch path).</summary>
+    private static string ResolveExecutable(DockItemViewModel app)
+    {
+        if (app.Windows.Count > 0)
+        {
+            string exe = TaskbarApps.GetWindowExePath(app.Windows[0]);
+            if (!string.IsNullOrEmpty(exe))
+                return exe;
+        }
+        return app.LaunchPath;
+    }
+
+    /// <summary>A stable HKCU Run value name for the app (its executable file name, else display name).</summary>
+    private static string StartupEntryName(DockItemViewModel app, string exe)
+    {
+        try
+        {
+            string name = Path.GetFileNameWithoutExtension(exe);
+            if (!string.IsNullOrEmpty(name))
+                return name;
+        }
+        catch { /* fall through */ }
+        return app.DisplayName;
+    }
+
+    /// <summary>Gracefully closes (or, when forced, kills) every window/process backing the app.</summary>
+    private void QuitApp(DockItemViewModel app, bool force)
+    {
+        if (!force)
+        {
+            foreach (var hwnd in app.Windows.ToArray())
+                WindowControl.Close(hwnd); // WM_CLOSE — lets the app prompt to save
+            return;
+        }
+
+        var pids = new HashSet<uint>();
+        foreach (var hwnd in app.Windows)
+        {
+            uint pid = WindowControl.GetProcessId(hwnd);
+            if (pid != 0)
+                pids.Add(pid);
+        }
+        foreach (uint pid in pids)
+        {
+            try { System.Diagnostics.Process.GetProcessById((int)pid).Kill(); }
+            catch { /* already gone / no access */ }
+        }
+    }
 
     /// <summary>Shows the "Dock Preferences" window, focusing it if already open (single instance).</summary>
     private void OpenDockPreferences()
@@ -1058,7 +1279,7 @@ public partial class DockWindow : Window
             return;
         }
 
-        _settingsWindow = new SettingsWindow(ViewModel, SetTheme);
+        _settingsWindow = new SettingsWindow(ViewModel, SetTheme, SetEdge, SetHideTaskbar);
         _settingsWindow.Closed += (_, _) => _settingsWindow = null;
         _settingsWindow.Show();
     }
@@ -1068,51 +1289,90 @@ public partial class DockWindow : Window
     private void OnDragOver(object sender, DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
             e.Effects = DragDropEffects.None;
+            ClearExternalDropGap();
+            e.Handled = true;
+            return;
+        }
+
+        double main = DropMain(e.GetPosition(this));
+        if (IsOverRecycleBin(main))
+        {
+            e.Effects = DragDropEffects.Move;
+            ClearExternalDropGap(); // no placeholder when hovering the Recycle Bin
+        }
         else
-            e.Effects = IsOverRecycleBin(e.GetPosition(this).X) ? DragDropEffects.Move : DragDropEffects.Copy;
+        {
+            e.Effects = DragDropEffects.Copy;
+            ShowExternalDropGap(main); // part the tiles to preview where the icon would land
+        }
+        e.Handled = true;
+    }
+
+    // The external drag left the dock without dropping: close the placeholder gap.
+    private void OnDragLeave(object sender, DragEventArgs e)
+    {
+        ClearExternalDropGap();
         e.Handled = true;
     }
 
     // External files dragged from Explorer (internal reorder uses the custom mouse drag above).
     private void OnDrop(object sender, DragEventArgs e)
     {
+        ClearExternalDropGap();
         if (ViewModel is null || e.Data.GetData(DataFormats.FileDrop) is not string[] paths)
             return;
 
-        // Dropped onto the Recycle Bin → move them there; anywhere else → pin them.
-        if (IsOverRecycleBin(e.GetPosition(this).X))
+        double main = DropMain(e.GetPosition(this));
+
+        // Dropped onto the Recycle Bin → move them there; anywhere else → pin them where the gap was.
+        if (IsOverRecycleBin(main))
         {
             RecycleBin.SendToRecycleBin(paths);
             RefreshTaskbarApps(); // refresh the bin's empty/full icon promptly
             return;
         }
 
-        int index = ComputePinIndex(e.GetPosition(this).X);
+        int index = ViewModel.ComputeDropIndex(main);
         foreach (var path in paths)
             ViewModel.PinApp(path, index++);
 
         RefreshTaskbarApps();
     }
 
-    /// <summary>True if the given window-X falls within the Recycle Bin tile's column.</summary>
-    private bool IsOverRecycleBin(double cursorX)
+    // Opens / refreshes the placeholder gap and keeps the render loop running so the tiles part and
+    // track the cursor; cleared on leave/drop so they glide back together.
+    private void ShowExternalDropGap(double main)
     {
-        var bin = ViewModel?.Items.FirstOrDefault(i => i.IsRecycleBin);
-        return bin is not null && cursorX >= bin.X && cursorX <= bin.X + bin.RenderWidth;
+        ClearWindowRegion(); // unclip so the widening bar and parted tiles render (and receive the drag)
+        ViewModel?.UpdateExternalDrop(main);
+        HookRendering();
     }
 
-    /// <summary>Insertion index among the pinned tiles for a given cursor X (window coords).</summary>
-    private int ComputePinIndex(double cursorX)
+    private void ClearExternalDropGap()
     {
-        var pinned = ViewModel?.Items.Where(i => i.IsTaskbarApp && i.IsPinned).ToList();
-        if (pinned is null)
-            return 0;
-        for (int i = 0; i < pinned.Count; i++)
-            if (cursorX < pinned[i].X + pinned[i].RenderSize / 2)
-                return i;
-        return pinned.Count;
+        ViewModel?.EndExternalDrop();
+        HookRendering(); // run the loop so the parted tiles settle back
     }
+
+    /// <summary>The cursor's main-axis (window) coordinate: X for a horizontal dock, Y for a vertical one.</summary>
+    private double DropMain(Point p) => IsVerticalDock ? p.Y : p.X;
+
+    /// <summary>Main-axis position/size of an item along the bar (handles both orientations).</summary>
+    private (double Pos, double Size) ItemMain(DockItemViewModel item) =>
+        IsVerticalDock ? (item.Y, item.RenderSize) : (item.X, item.RenderWidth);
+
+    /// <summary>True if the given main-axis coordinate falls within the Recycle Bin tile.</summary>
+    private bool IsOverRecycleBin(double cursorMain)
+    {
+        var bin = ViewModel?.Items.FirstOrDefault(i => i.IsRecycleBin);
+        if (bin is null)
+            return false;
+        var (pos, size) = ItemMain(bin);
+        return cursorMain >= pos && cursorMain <= pos + size;
+    }
+
 
     // --- Tray icon ---
 
@@ -1123,11 +1383,6 @@ public partial class DockWindow : Window
         var toggle = new MenuItem { Header = "Show / Hide Dock" };
         toggle.Click += (_, _) => ToggleVisibility();
         menu.Items.Add(toggle);
-
-        var autoHideItem = new MenuItem { Header = "Auto-hide", IsCheckable = true };
-        autoHideItem.Click += (_, _) =>
-            SetBehavior(autoHideItem.IsChecked ? DockBehavior.AutoHide : DockBehavior.AlwaysVisible);
-        menu.Items.Add(autoHideItem);
 
         var hideTaskbarItem = new MenuItem { Header = "Hide taskbar", IsCheckable = true };
         hideTaskbarItem.Click += (_, _) => SetHideTaskbar(hideTaskbarItem.IsChecked);
@@ -1153,7 +1408,6 @@ public partial class DockWindow : Window
         // Reflect current settings whenever the menu opens.
         menu.Opened += (_, _) =>
         {
-            autoHideItem.IsChecked = AutoHide;
             hideTaskbarItem.IsChecked = ViewModel?.Settings.HideTaskbar ?? false;
             var theme = ViewModel?.Settings.Theme ?? DockTheme.System;
             themeLight.IsChecked = theme == DockTheme.Light;
@@ -1199,9 +1453,8 @@ public partial class DockWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        _slideTimer.Stop();
-        _hideDelayTimer.Stop();
         _appRefreshTimer.Stop();
+        _startWatchTimer.Stop();
         _pinWatcher?.Dispose();
         _minimizeHook.Dispose();
         _thumbnails.Dispose();
