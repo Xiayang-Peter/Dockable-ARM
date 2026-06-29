@@ -58,6 +58,9 @@ public sealed partial class DockItemViewModel : ObservableObject
     /// <summary>What to launch when the app has no open windows (the .lnk or exe path).</summary>
     public string LaunchPath { get; set; } = string.Empty;
 
+    /// <summary>True for the built-in Dock Preferences tile (opens the dock's own window, not a shell launch).</summary>
+    public bool IsPreferences => string.Equals(LaunchPath, DockItem.PreferencesLaunchPath, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>Handles of this app's open windows (empty when not running).</summary>
     public IReadOnlyList<IntPtr> Windows { get; set; } = Array.Empty<IntPtr>();
 

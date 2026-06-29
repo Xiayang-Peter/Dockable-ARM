@@ -3,6 +3,7 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
 using Dockable.Interop;
+using Dockable.Localization;
 using Dockable.Services;
 using Dockable.ViewModels;
 
@@ -47,6 +48,10 @@ public partial class App : Application
             DockViewModel = new DockViewModel(SettingsStore);
             DockViewModel.Load();
 
+            // Resolve the UI language (saved choice, else the Windows display language → English) and
+            // persist the concrete code so the choice is sticky.
+            DockViewModel.Settings.Language = Loc.Initialize(DockViewModel.Settings.Language);
+
             _dockWindow = new DockWindow { DataContext = DockViewModel };
             _dockWindow.Show();
         }
@@ -57,7 +62,7 @@ public partial class App : Application
             LogCrash(ex, "Startup");
             Taskbar.Restore();
             MessageBox.Show(
-                $"Dockable failed to start:\n\n{ex.Message}\n\nDetails were written to %APPDATA%\\Dockable\\crash.log.",
+                string.Format(Loc.T("Error_StartupFailed"), ex.Message),
                 "Dockable", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown();
         }

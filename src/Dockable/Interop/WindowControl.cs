@@ -57,6 +57,14 @@ public static class WindowControl
     public static void MinimizeNoActivate(IntPtr hwnd) =>
         PInvoke.ShowWindow((HWND)hwnd, SHOW_WINDOW_CMD.SW_SHOWMINNOACTIVE);
 
+    /// <summary>
+    /// Minimizes a window and activates the next top-level window (normal minimize focus behaviour).
+    /// With OS transitions suppressed it's instant — used to drive the dock's own Preferences window
+    /// into the genie/scale warp.
+    /// </summary>
+    public static void Minimize(IntPtr hwnd) =>
+        PInvoke.ShowWindow((HWND)hwnd, SHOW_WINDOW_CMD.SW_MINIMIZE);
+
     /// <summary>The window's restored (non-minimized) bounds in physical pixels, or null.</summary>
     public static Int32Rect? GetRestoreRect(IntPtr hwnd)
     {

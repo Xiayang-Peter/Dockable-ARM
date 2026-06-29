@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
+using Dockable.Localization;
 
 namespace Dockable;
 
@@ -50,9 +51,9 @@ internal sealed class InputDialog : Window
         stack.Children.Add(_input);
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var cancel = new Button { Content = "Cancel", MinWidth = 84, Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(10, 5, 10, 5), IsCancel = true };
+        var cancel = new Button { Content = Loc.T("Common_Cancel"), MinWidth = 84, Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(10, 5, 10, 5), IsCancel = true };
         cancel.Click += (_, _) => DialogResult = false;
-        var ok = new Button { Content = "OK", MinWidth = 84, Padding = new Thickness(10, 5, 10, 5), IsDefault = true };
+        var ok = new Button { Content = Loc.T("Common_OK"), MinWidth = 84, Padding = new Thickness(10, 5, 10, 5), IsDefault = true };
         ok.Click += (_, _) => DialogResult = true;
         buttons.Children.Add(cancel);
         buttons.Children.Add(ok);

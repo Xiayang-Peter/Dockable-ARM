@@ -15,14 +15,30 @@
     <PlatformTarget>x64</PlatformTarget>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>Assets\Dockable.ico</ApplicationIcon>
+
+    <!-- Product / author metadata (surfaced in the About window and the assembly info). -->
+    <Product>Dockable</Product>
+    <Authors>Jezz Lucena</Authors>
+    <Company>Jezz Lucena</Company>
+    <Description>A macOS-style Dock for Windows 11.</Description>
+    <Version>1.0.0</Version>
+    <NeutralLanguage>en</NeutralLanguage>
   </PropertyGroup>
 
   <!-- App icon: embedded in the exe (ApplicationIcon) and as resources for the tray / window icons. -->
   <ItemGroup>
     <None Remove="Assets\Dockable.png" />
     <None Remove="Assets\Dockable-32.png" />
+    <None Remove="Assets\Settings_icon.png" />
     <Resource Include="Assets\Dockable.png" />
     <Resource Include="Assets\Dockable-32.png" />
+    <Resource Include="Assets\Settings_icon.png" />
+  </ItemGroup>
+
+  <!-- UI sound effects: copied next to the exe so SoundPlayer can load them by path. -->
+  <ItemGroup>
+    <None Remove="Assets\Sounds\*.wav" />
+    <Content Include="Assets\Sounds\*.wav" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

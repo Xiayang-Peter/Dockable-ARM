@@ -64,6 +64,23 @@ public sealed class AllTrueToVisibilityConverter : IMultiValueConverter
         => throw new NotSupportedException();
 }
 
+/// <summary>Multiplies a double by the (double) ConverterParameter. Used to center a content-sized
+/// hover label: offset by half the icon width, then back by half the label's own width.</summary>
+public sealed class MultiplyConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        double v = value is double d ? d : 0;
+        double factor = parameter is double p
+            ? p
+            : double.TryParse(parameter as string, NumberStyles.Float, CultureInfo.InvariantCulture, out double f) ? f : 1;
+        return v * factor;
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
+
 /// <summary>
 /// Visible only for icon-bearing items whose icon has not loaded yet.
 /// Bindings (in order): ShowIconArea (bool), Icon (object?).

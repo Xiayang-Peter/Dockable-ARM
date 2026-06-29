@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
+using Dockable.Localization;
 
 namespace Dockable;
 
@@ -42,7 +43,7 @@ internal sealed class ConfirmDialog : Window
 
         _doNotAsk = new CheckBox
         {
-            Content = "Do not ask again",
+            Content = Loc.T("Common_DoNotAskAgain"),
             IsChecked = false,
             Foreground = new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3C)),
             Margin = new Thickness(0, 0, 0, 18),
@@ -50,9 +51,9 @@ internal sealed class ConfirmDialog : Window
         stack.Children.Add(_doNotAsk);
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var no = new Button { Content = "No", MinWidth = 84, Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(10, 5, 10, 5), IsCancel = true };
+        var no = new Button { Content = Loc.T("Common_No"), MinWidth = 84, Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(10, 5, 10, 5), IsCancel = true };
         no.Click += (_, _) => DialogResult = false;
-        var yes = new Button { Content = "Yes", MinWidth = 84, Padding = new Thickness(10, 5, 10, 5), IsDefault = true };
+        var yes = new Button { Content = Loc.T("Common_Yes"), MinWidth = 84, Padding = new Thickness(10, 5, 10, 5), IsDefault = true };
         yes.Click += (_, _) => DialogResult = true;
         buttons.Children.Add(no);
         buttons.Children.Add(yes);

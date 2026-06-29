@@ -1,0 +1,18 @@
+// SteamPipe depot script for Dockable — referenced by app_build.vdf.
+// Ships the entire self-contained publish folder. LocalPath is relative to the AppBuild ContentRoot.
+
+"DepotBuild"
+{
+	"DepotID"  "YOUR_DEPOT_ID"
+
+	"FileMapping"
+	{
+		"LocalPath"  "*"      // everything under ContentRoot
+		"DepotPath"  "."      // mapped to the depot root
+		"recursive"  "1"
+	}
+
+	// Defensive excludes (the SteamRelease profile already omits symbols).
+	"FileExclusion"  "*.pdb"
+	"FileExclusion"  "*.xml"
+}

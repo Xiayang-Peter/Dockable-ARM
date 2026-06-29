@@ -6,6 +6,10 @@ namespace Dockable.Models;
 /// </summary>
 public sealed class DockItem
 {
+    /// <summary>Sentinel launch path identifying the built-in "Dock Preferences" pseudo-app/pin
+    /// (it isn't a real file — the dock opens its own Preferences window instead of shell-launching).</summary>
+    public const string PreferencesLaunchPath = "dockable://preferences";
+
     /// <summary>Stable identity, used to match persisted items to view-models.</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 

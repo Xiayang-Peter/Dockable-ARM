@@ -73,6 +73,26 @@ public static class RecycleBin
         }
     }
 
+    private const uint SHERB_NOSOUND = 0x00000004; // suppress the system empty sound (the dock plays its own)
+
+    /// <summary>
+    /// Empties the Recycle Bin (all drives) via the shell, showing the OS "permanently delete?"
+    /// confirmation prompt (owned by <paramref name="ownerHwnd"/>). The system empty sound is
+    /// suppressed. Returns true if the shell reported success (the user confirmed and it emptied).
+    /// </summary>
+    public static bool Empty(IntPtr ownerHwnd)
+    {
+        try
+        {
+            return PInvoke.SHEmptyRecycleBin((HWND)ownerHwnd, null!, SHERB_NOSOUND).Succeeded;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Dockable] Empty Recycle Bin failed: {ex.Message}");
+            return false;
+        }
+    }
+
     /// <summary>Opens the Recycle Bin in Explorer.</summary>
     public static void Open()
     {

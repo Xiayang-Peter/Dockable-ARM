@@ -1,10 +1,15 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using Dockable.Interop;
+using Dockable.Localization;
 using Dockable.Models;
 using Dockable.ViewModels;
+using Windows.Win32;
+using Windows.Win32.Foundation;
+using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Dockable;
 
@@ -46,6 +51,10 @@ public partial class SettingsWindow : Window
 
         var s = vm.Settings;
 
+        // Language: list native names; select the active language by its culture code.
+        LanguageCombo.ItemsSource = Loc.Languages.Select(l => l.Name).ToList();
+        LanguageCombo.SelectedIndex = Math.Max(0, IndexOfLanguage(Loc.Instance.CurrentCode));
+
         // Appearance (theme)
         switch (s.Theme)
         {
@@ -61,7 +70,7 @@ public partial class SettingsWindow : Window
         PositionCombo.SelectedIndex = (int)s.Edge;   // DockEdge: Bottom, Left, Right, Top (matches combo order)
         GlassEffectCombo.SelectedIndex = (int)s.GlassEffect; // GlassEffect: Simple, Acrylic, LiquidGlass
         MinimizeCombo.SelectedIndex = (int)s.MinimizeEffect; // MinimizeEffect: Suck, Scale, Genie
-        EffectSpeedSlider.Value = SpeedToSlider(s.EffectSpeed);
+        EffectSpeedSlider.Value = SpeedToStep(s.EffectSpeed);
         OpenAtLoginSwitch.IsChecked = StartupManager.IsEnabled(StartupEntryName);
         IndicatorsSwitch.IsChecked = s.ShowRunningIndicators;
         AnimateOpeningSwitch.IsChecked = s.AnimateOpeningApps;
@@ -69,6 +78,61 @@ public partial class SettingsWindow : Window
         HideTaskbarSwitch.IsChecked = s.HideTaskbar;
 
         _initializing = false;
+
+        // Resizable, but never wider/taller than its content nor larger than the screen; it scrolls when
+        // the window is shorter than the content. Width is content-driven (no horizontal resize/clip);
+        // MaxHeight starts at the viewport so SizeToContent can't overflow it, then is locked to the
+        // settled content height in OnPrefsLoaded.
+        var work = SystemParameters.WorkArea;
+        Width = Math.Min(Width, work.Width);
+        MinWidth = MaxWidth = Width;
+        MaxHeight = work.Height;
+        Loaded += OnPrefsLoaded;
+    }
+
+    private void OnPrefsLoaded(object sender, RoutedEventArgs e)
+    {
+        // The window has sized to its content (capped to the work area). Lock that as the max height,
+        // then switch to manual sizing so the user can shrink it (content scrolls) but never grow it
+        // past its content or beyond the screen.
+        SizeToContent = SizeToContent.Manual;
+        MaxHeight = ActualHeight;
+    }
+
+    // ResizeMode=CanResize adds a maximize box; remove it so the window can't jump to a corner — its
+    // size is already capped to its content and the viewport.
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        var hwnd = (HWND)new WindowInteropHelper(this).Handle;
+        var style = (WINDOW_STYLE)(uint)PInvoke.GetWindowLongPtr(hwnd, WINDOW_LONG_PTR_INDEX.GWL_STYLE);
+        PInvoke.SetWindowLongPtr(hwnd, WINDOW_LONG_PTR_INDEX.GWL_STYLE, (nint)(uint)(style & ~WINDOW_STYLE.WS_MAXIMIZEBOX));
+    }
+
+    // --- Language ---
+
+    private static int IndexOfLanguage(string code)
+    {
+        var langs = Loc.Languages;
+        for (int i = 0; i < langs.Count; i++)
+            if (langs[i].Code == code)
+                return i;
+        return -1;
+    }
+
+    // Applies the chosen language live (Loc raises PropertyChanged for bindings + LanguageChanged for
+    // the dock's code-built menus) and persists the culture code.
+    private void LanguageCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing)
+            return;
+        int i = LanguageCombo.SelectedIndex;
+        if (i < 0 || i >= Loc.Languages.Count)
+            return;
+        string code = Loc.Languages[i].Code;
+        _vm.Settings.Language = code;
+        _vm.Save();
+        Loc.Instance.SetLanguage(code);
     }
 
     // --- Appearance (theme) ---
@@ -189,16 +253,29 @@ public partial class SettingsWindow : Window
     }
 
     // --- Effect speed ---
-    // Slider runs 0..1 with the default at 0.5 = current speed (1x). Mapping is geometric so the
-    // midpoint is exactly 1x: position 0 → 0.5x (slow), position 1 → 2x (fast).
-    private static double SliderToSpeed(double pos) => Math.Pow(2, (pos - 0.5) * 2);
-    private static double SpeedToSlider(double speed) => Math.Clamp(0.5 + Math.Log2(speed) / 2, 0, 1);
+    // The slider snaps to 5 positions: Slow, ·, Regular, ·, Fast. Speed is the animation's
+    // SpeedMultiplier; the scale now tops out at 1x (the base speed) — Slow is very slow (0.01).
+    private static readonly double[] SpeedSteps = { 0.01, 0.25, 0.5, 0.75, 1.0 };
+
+    private static double StepToSpeed(int step) => SpeedSteps[Math.Clamp(step, 0, SpeedSteps.Length - 1)];
+
+    private static int SpeedToStep(double speed)
+    {
+        int best = 0;
+        double bestDiff = double.MaxValue;
+        for (int i = 0; i < SpeedSteps.Length; i++)
+        {
+            double diff = Math.Abs(SpeedSteps[i] - speed);
+            if (diff < bestDiff) { bestDiff = diff; best = i; }
+        }
+        return best;
+    }
 
     private void EffectSpeedSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_initializing)
             return;
-        _vm.Settings.EffectSpeed = SliderToSpeed(e.NewValue);
+        _vm.Settings.EffectSpeed = StepToSpeed((int)Math.Round(e.NewValue));
         _vm.Save();
     }
 

@@ -52,11 +52,18 @@ public sealed class DockSettings
 {
     public DockEdge Edge { get; set; } = DockEdge.Bottom;
 
+    /// <summary>
+    /// UI language culture code (e.g. "en", "pt-BR", "es", "uk", "zh-Hans"). Null = not yet chosen;
+    /// on first run it's resolved from the Windows display language (falling back to English) and
+    /// then persisted.
+    /// </summary>
+    public string? Language { get; set; }
+
     /// <summary>Color theme: follow the OS (System) or force Light/Dark.</summary>
     public DockTheme Theme { get; set; } = DockTheme.System;
 
-    /// <summary>Dock bar background style (Simple / Acrylic / Liquid Glass).</summary>
-    public GlassEffect GlassEffect { get; set; } = GlassEffect.Acrylic;
+    /// <summary>Dock bar background style (Translucent / Acrylic / Liquid Glass). Defaults to Liquid Glass.</summary>
+    public GlassEffect GlassEffect { get; set; } = GlassEffect.LiquidGlass;
 
     /// <summary>Window minimize/restore animation style.</summary>
     public MinimizeEffect MinimizeEffect { get; set; } = MinimizeEffect.Genie;
@@ -106,6 +113,13 @@ public sealed class DockSettings
 
     /// <summary>Prompt to add Dockable to the Windows startup sequence.</summary>
     public bool AskAddToStartup { get; set; } = true;
+
+    /// <summary>
+    /// Whether the built-in "Dock Preferences" pin has been seeded once (to the right of the
+    /// taskbar-seeded pins). The flag makes removal stick — once the user unpins it, it's never
+    /// re-added.
+    /// </summary>
+    public bool SeededPreferencesPin { get; set; }
 
     /// <summary>
     /// Taskbar pins we've already seen/offered (resolved targets), so only newly-added pins prompt.

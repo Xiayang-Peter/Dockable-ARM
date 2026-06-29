@@ -24,7 +24,7 @@ namespace Dockable.Genie;
 /// </summary>
 public sealed class GenieAnimator : IMinimizeAnimator
 {
-    private const int Columns = 6;
+    private const int Columns = 12; // finer horizontally so the Suck black-hole spiral stays smooth
     private const int Rows = 48;
 
     /// <summary>Which curve the mesh warp uses; both share the engine, differing only in shaping.</summary>
@@ -35,14 +35,25 @@ public sealed class GenieAnimator : IMinimizeAnimator
     /// <param name="TargetWidth">Neck/point width at full warp (DIP).</param>
     /// <param name="WidthBulge">Mid-neck width bulge as a fraction of the source width (negative pinches).</param>
     /// <param name="Duration">Animation length in ms.</param>
-    private readonly record struct StyleParams(double Stagger, double TargetWidth, double WidthBulge, double Duration);
+    /// <param name="ShapeEnd">Local-progress point by which the horizontal funnel/pinch is complete
+    /// (&lt;1 front-loads the distortion). 1.0 = horizontal tracks the descent (the old unified curve).</param>
+    /// <param name="DescendStart">Local-progress point at which the vertical descent begins (&gt;0
+    /// back-loads the drop). 0 = descend from the start.</param>
+    private readonly record struct StyleParams(
+        double Stagger, double TargetWidth, double WidthBulge, double Duration, double ShapeEnd, double DescendStart);
 
     private static StyleParams ParamsFor(GenieStyle style) => style switch
     {
-        // Smoke flowing into a bottle: a gentle stagger and a bulging belly in the neck, a touch slower.
-        GenieStyle.Genie => new StyleParams(Stagger: 0.5, TargetWidth: 6, WidthBulge: 0.35, Duration: 430),
-        // Paper sucked into a vacuum: a hard, fast funnel that whips edge-first to a point, no belly.
-        _ => new StyleParams(Stagger: 0.95, TargetWidth: 2, WidthBulge: -0.08, Duration: 270),
+        // Smoke flowing into a bottle: the horizontal shrink is focused on the first ~2/3 (and only goes
+        // down to the tile width, not a point), while the vertical glide runs the whole time — so the two
+        // move together but the bottleneck shape is mostly formed before it lands. TargetWidth is unused
+        // for Genie (the neck width comes from TargetTileWidth).
+        GenieStyle.Genie => new StyleParams(Stagger: 0.5, TargetWidth: 6, WidthBulge: 0.35, Duration: 430,
+            ShapeEnd: 0.66, DescendStart: 0.0),
+        // Black hole: every point is dragged straight toward the target, nearest points first — so the
+        // window stretches and collapses into the spot. Stagger = how strongly nearer points lead.
+        _ => new StyleParams(Stagger: 0.95, TargetWidth: 2, WidthBulge: -0.08, Duration: 300,
+            ShapeEnd: 1.0, DescendStart: 0.0),
     };
 
     /// <summary>Which curve to warp with; set before each play (defaults to the Suck funnel).</summary>
@@ -50,6 +61,11 @@ public sealed class GenieAnimator : IMinimizeAnimator
 
     /// <summary>Speed multiplier; &gt;1 shortens the duration (faster), &lt;1 lengthens it (slower).</summary>
     public double SpeedMultiplier { get; set; } = 1.0;
+
+    /// <summary>Dock tile width (DIP). For the Genie style the window's width shrinks only down to this
+    /// (so it lands looking like the thumbnail, not a thin neck). The Suck funnel ignores it (pinches to
+    /// a point). Set before each play.</summary>
+    public double TargetTileWidth { get; set; } = 56;
 
     private Window? _overlay;
     private MeshGeometry3D? _mesh;
@@ -263,11 +279,63 @@ public sealed class GenieAnimator : IMinimizeAnimator
         return mesh;
     }
 
-    /// <summary>
-    /// Recomputes vertex positions for a given warp amount. Lower rows lead (a staggered flow),
-    /// pinching their width and sliding toward the target, producing the genie neck/funnel.
-    /// </summary>
+    /// <summary>Recomputes vertex positions for a given warp amount, per the active style.</summary>
     private void UpdateMesh(double warp)
+    {
+        if (Style == GenieStyle.Suck)
+            UpdateMeshBlackHole(warp);
+        else
+            UpdateMeshGenie(warp);
+    }
+
+    /// <summary>
+    /// Black-hole collapse: every vertex is pulled straight toward the target, with the vertices nearest
+    /// the target arriving first (so the window stretches and collapses into the point — gravity, not a
+    /// uniform funnel). At full warp everything reaches the target (the thumbnail's spot).
+    /// </summary>
+    private void UpdateMeshBlackHole(double warp)
+    {
+        var mesh = _mesh!;
+        var src = _src;
+        var p = _params;
+        var positions = mesh.Positions;
+        int rowStride = Columns + 1;
+        double tx = _target.X, ty = _target.Y;
+
+        // Normalize the per-vertex "fall-in" stagger by the farthest source corner from the target.
+        double maxDist = 1e-3;
+        maxDist = Math.Max(maxDist, Distance(src.Left - tx, src.Top - ty));
+        maxDist = Math.Max(maxDist, Distance(src.Right - tx, src.Top - ty));
+        maxDist = Math.Max(maxDist, Distance(src.Left - tx, src.Bottom - ty));
+        maxDist = Math.Max(maxDist, Distance(src.Right - tx, src.Bottom - ty));
+
+        for (int j = 0; j <= Rows; j++)
+        {
+            double v = (double)j / Rows;
+            for (int i = 0; i <= Columns; i++)
+            {
+                double u = (double)i / Columns;
+                double ox = src.Left + u * src.Width;
+                double oy = src.Top + v * src.Height;
+
+                // Normalized distance to the target (0 at the target … 1 at the farthest corner). It's
+                // subtracted from the progress, so the farther a vertex is the more it lags — i.e. the
+                // vertices nearest the target arrive first.
+                double lag = Clamp01(Distance(ox - tx, oy - ty) / maxDist);
+                double e = SmoothStep(Clamp01(warp * (1 + p.Stagger) - lag * p.Stagger));
+
+                double x = Lerp(ox, tx, e); // straight pull toward the thumbnail's spot
+                double y = Lerp(oy, ty, e);
+                positions[j * rowStride + i] = new Point3D(x, _height - y, 0);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Genie funnel: rows lead in a staggered flow, pinching their width to the tile and sliding toward
+    /// the target — the smoke-into-a-bottle neck.
+    /// </summary>
+    private void UpdateMeshGenie(double warp)
     {
         var mesh = _mesh!;
         var src = _src;
@@ -276,6 +344,7 @@ public sealed class GenieAnimator : IMinimizeAnimator
         var positions = mesh.Positions;
         double srcCenterX = src.Left + src.Width / 2;
         int rowStride = Columns + 1;
+        double neckWidth = TargetTileWidth; // shrink only to the tile width (lands as the thumbnail)
 
         for (int j = 0; j <= Rows; j++)
         {
@@ -284,16 +353,19 @@ public sealed class GenieAnimator : IMinimizeAnimator
             // the bottom rows (v=1) otherwise.
             double lead = _leadFromTop ? v : 1 - v;
             double lp = Clamp01(warp * (1 + p.Stagger) - lead * p.Stagger);
-            double e = SmoothStep(lp);
+            // Decouple the horizontal shaping from the vertical descent: the funnel/pinch front-loads
+            // (done by ShapeEnd) so the neck forms early, then the drop happens (starting at DescendStart).
+            double eShape = SmoothStep(Clamp01(lp / p.ShapeEnd));
+            double eDescend = SmoothStep(Clamp01((lp - p.DescendStart) / (1 - p.DescendStart)));
 
-            double rowCenterX = Lerp(srcCenterX, target.X, e);
+            double rowCenterX = Lerp(srcCenterX, target.X, eShape);
             // Width tapers from the body to the neck; the bulge term bellies the mid-neck out (smoke
             // into a bottle) for the Genie style, or pinches it (negative) for the rigid Suck funnel.
-            double baseWidth = Lerp(src.Width, p.TargetWidth, e);
-            double bulge = p.WidthBulge * src.Width * Math.Sin(Math.PI * e);
-            double rowWidth = Math.Max(p.TargetWidth, baseWidth + bulge);
+            double baseWidth = Lerp(src.Width, neckWidth, eShape);
+            double bulge = p.WidthBulge * src.Width * Math.Sin(Math.PI * eShape);
+            double rowWidth = Math.Max(neckWidth, baseWidth + bulge);
             double origY = src.Top + v * src.Height;
-            double y = Lerp(origY, target.Y, e);
+            double y = Lerp(origY, target.Y, eDescend);
 
             for (int i = 0; i <= Columns; i++)
             {
@@ -311,4 +383,5 @@ public sealed class GenieAnimator : IMinimizeAnimator
     private static double Clamp01(double t) => t < 0 ? 0 : t > 1 ? 1 : t;
     private static double Lerp(double a, double b, double t) => a + (b - a) * t;
     private static double SmoothStep(double t) => t * t * (3 - 2 * t);
+    private static double Distance(double dx, double dy) => Math.Sqrt(dx * dx + dy * dy);
 }

@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Dockable.Interop;
+using Dockable.Localization;
 using Dockable.Models;
 using Dockable.Services;
 using Dockable.Shell;
@@ -57,6 +58,15 @@ public sealed partial class DockViewModel : ObservableObject
     [ObservableProperty]
     private bool _showRunningIndicators = true;
 
+    /// <summary>Whether the Dock Preferences window is currently open (drives the Preferences tile's
+    /// running dot + whether it appears as a running app when not pinned). Set by the dock; a refresh
+    /// reflects it.</summary>
+    public bool PreferencesOpen { get; set; }
+
+    /// <summary>The Dock Preferences window's native handle while open (else zero). Tracked on the
+    /// Preferences tile so it can minimize into the dock and restore like any other window.</summary>
+    public IntPtr PreferencesHwnd { get; set; }
+
     // --- Geometry driven by the layout engine and consumed by the window/XAML ---
 
     [ObservableProperty] private double _windowWidth = 200;
@@ -101,6 +111,10 @@ public sealed partial class DockViewModel : ObservableObject
         _ => new Thickness(0, 0, 0, -DotGap), // Bottom
     };
 
+    /// <summary>Per-icon hover labels are positioned above the icon, which only suits the Bottom edge
+    /// (other edges are a TODO); they're suppressed elsewhere.</summary>
+    public bool HoverLabelsEnabled => Settings.Edge == DockEdge.Bottom;
+
     // Separator: a 2px line across the bar — vertical for horizontal docks, horizontal for vertical
     // docks. NaN width/height = Auto, which stretches under the matching Stretch alignment.
     public double SeparatorWidth => IsVerticalDock ? double.NaN : 2;
@@ -115,6 +129,7 @@ public sealed partial class DockViewModel : ObservableObject
         Save();
         RecomputeLayout();
         OnPropertyChanged(nameof(IsVerticalDock));
+        OnPropertyChanged(nameof(HoverLabelsEnabled));
         OnPropertyChanged(nameof(DotVAlign));
         OnPropertyChanged(nameof(DotHAlign));
         OnPropertyChanged(nameof(DotMargin));
@@ -174,6 +189,18 @@ public sealed partial class DockViewModel : ObservableObject
             Save();
         }
 
+        // Seed the built-in Dock Preferences pin once, to the right of the taskbar-seeded pins. The
+        // flag makes removal stick (once the user unpins it, we never re-add it) and also back-fills
+        // it for installs whose pin list was seeded before this feature existed.
+        if (!Settings.SeededPreferencesPin)
+        {
+            var pins = Settings.PinnedApps ??= new List<string>();
+            if (!pins.Contains(DockItem.PreferencesLaunchPath, StringComparer.OrdinalIgnoreCase))
+                pins.Add(DockItem.PreferencesLaunchPath);
+            Settings.SeededPreferencesPin = true;
+            Save();
+        }
+
         _startVm = new DockItemViewModel(DockItem.CreateStartMenu());
         _pinSeparatorVm = new DockItemViewModel(DockItem.CreateSeparator("separator-pinned"));
         _separatorVm = new DockItemViewModel(DockItem.CreateSeparator("separator-minimized"));
@@ -206,6 +233,13 @@ public sealed partial class DockViewModel : ObservableObject
         // Pinned apps first, in the dock's own order. Each claims its matching windows.
         foreach (var path in pinnedPaths)
         {
+            // The built-in Dock Preferences pin has no external window to match — it's our own window.
+            if (string.Equals(path, DockItem.PreferencesLaunchPath, StringComparison.OrdinalIgnoreCase))
+            {
+                desired.Add(UpdatePreferencesApp(isPinned: true));
+                continue;
+            }
+
             var pin = PinMatcher.For(path);
             var handles = new List<IntPtr>();
             for (int i = 0; i < windows.Count; i++)
@@ -249,6 +283,13 @@ public sealed partial class DockViewModel : ObservableObject
         }
         unpinned.Sort((a, b) => a.SeenOrder.CompareTo(b.SeenOrder));
         desired.AddRange(unpinned);
+
+        // The Dock Preferences window, when open but not pinned, shows as a running (unpinned) app so
+        // the user can refocus or quit it from the dock.
+        if (PreferencesOpen
+            && !pinnedPaths.Contains(DockItem.PreferencesLaunchPath, StringComparer.OrdinalIgnoreCase)
+            && !desired.Exists(d => d.IsPreferences))
+            desired.Add(UpdatePreferencesApp(isPinned: false));
 
         // Apps that disappeared this refresh fade out (shrink-out) instead of vanishing and snapping the
         // row's width. They stay in the layout (kept roughly in place) until the shrink finishes, then
@@ -336,6 +377,46 @@ public sealed partial class DockViewModel : ObservableObject
         // back to their window's own icon.
         if (isNew)
             _ = vm.LoadIconAsync(IconPixelSize);
+        return vm;
+    }
+
+    /// <summary>
+    /// Creates/updates the built-in "Dock Preferences" tile — a pseudo taskbar app backed by the
+    /// dock's own Preferences window rather than an external process. Its icon is the bundled System
+    /// Preferences glyph; it reads as "running" while the window is open. The dock special-cases its
+    /// click (open/focus the window) and its context menu (Keep in Dock / Quit).
+    /// </summary>
+    private DockItemViewModel UpdatePreferencesApp(bool isPinned)
+    {
+        const string key = "dockable:preferences";
+        string name = Loc.T("Window_DockPreferences");
+        if (!_appByKey.TryGetValue(key, out var vm))
+        {
+            var model = DockItem.CreateTaskbarApp(name);
+            vm = new DockItemViewModel(model)
+            {
+                AppKey = key,
+                LaunchPath = DockItem.PreferencesLaunchPath,
+                SeenOrder = _appSeq++,
+                Icon = global::Dockable.AppIcon.Preferences,
+            };
+            vm.AppearScale = _appsInitialized ? 0.0 : 1.0; // grow in like any other tile
+            _appByKey[key] = vm;
+        }
+        else if (vm.Departing)
+        {
+            vm.Departing = false;
+            _departing.Remove(vm);
+        }
+
+        vm.DisplayName = name;                 // keep the label localized live
+        vm.LaunchPath = DockItem.PreferencesLaunchPath;
+        vm.Icon ??= global::Dockable.AppIcon.Preferences;
+        vm.IsPinned = isPinned;
+        // Track the real window handle while open, so the tile can minimize into the dock and restore
+        // through the same machinery as any app (FindAppForWindow, into-icon, click-to-restore).
+        vm.Windows = PreferencesHwnd != IntPtr.Zero ? new[] { PreferencesHwnd } : Array.Empty<IntPtr>();
+        vm.IsRunning = PreferencesOpen;
         return vm;
     }
 

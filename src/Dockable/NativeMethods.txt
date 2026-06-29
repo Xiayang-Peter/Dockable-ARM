@@ -55,8 +55,9 @@ GET_WINDOW_CMD
 DwmGetWindowAttribute
 GetWindowText
 
-// --- Recycle Bin state (empty vs. full, to refresh its dynamic icon) ---
+// --- Recycle Bin state (empty vs. full, to refresh its dynamic icon) + empty action ---
 SHQueryRecycleBin
+SHEmptyRecycleBin
 
 // --- Send dropped files/folders to the Recycle Bin ---
 SHFileOperation
@@ -140,3 +141,15 @@ DestroyWindow
 GetModuleHandle
 WNDCLASSEXW
 WINDOW_STYLE
+
+// --- Liquid Glass: compile the refraction shader at runtime (no fxc on this machine) ---
+D3DCompile
+ID3DBlob
+
+// --- Liquid Glass: exclude the dock from screen capture so it doesn't refract itself ---
+SetWindowDisplayAffinity
+WINDOW_DISPLAY_AFFINITY
+
+// --- Liquid Glass: cap the capture rate at the monitor's refresh rate ---
+GetDeviceCaps
+GET_DEVICE_CAPS_INDEX

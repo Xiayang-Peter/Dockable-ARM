@@ -20,7 +20,10 @@ public sealed class DockLayoutEngine
     private const double HPad = 14;   // padding at the two ends of the bar (along the main axis)
     private const double VPad = 14;   // padding between the bar edge and the icons (cross axis)
     private const double EdgeMargin = 16; // gap from the screen edge to the icon row
-    private const double TopHeadroom = 10;
+    // Headroom on the far-from-edge side. Generous so a per-icon hover label (which lives inside the
+    // window, above the magnified icon) isn't clipped by the window edge. This is transparent space;
+    // it doesn't move the bar or icons on screen (their position is independent of the window height).
+    private const double TopHeadroom = 52;
 
     private const double Smoothing = 0.35;       // scale easing
     private const double AppearSmoothing = 0.18;  // add/remove (grow-in / shrink-out) easing

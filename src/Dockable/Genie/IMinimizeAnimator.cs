@@ -13,6 +13,10 @@ public interface IMinimizeAnimator
     /// <summary>Speed multiplier for the animation (1 = default; &gt;1 plays faster, &lt;1 slower).</summary>
     double SpeedMultiplier { get; set; }
 
+    /// <summary>The dock tile's width (DIP) the window lands at — the genie necks down to this rather
+    /// than to a point, and the scale effect uses it as the landed size. Set before each play.</summary>
+    double TargetTileWidth { get; set; }
+
     /// <summary>Builds the reusable overlay ahead of time so the first play is instant.</summary>
     void Prewarm();
 

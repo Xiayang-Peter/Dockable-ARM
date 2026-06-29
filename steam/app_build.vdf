@@ -1,0 +1,24 @@
+// SteamPipe "app build" script for Dockable.
+//
+// Fill in YOUR_APP_ID and YOUR_DEPOT_ID from your Steamworks App admin
+// (Steamworks > your app > SteamPipe > Depots). Then upload with:
+//
+//   steamcmd +login <builder_account> +run_app_build "<abs path>\steam\app_build.vdf" +quit
+//
+// Tip: run steamcmd from the repo root, or make ContentRoot an absolute path, so the relative
+// path below resolves. ContentRoot points at the self-contained publish folder produced by the
+// SteamRelease profile (see steam/README.md).
+
+"AppBuild"
+{
+	"AppID"        "YOUR_APP_ID"
+	"Desc"         "Dockable 1.0.0"          // shown in the build history; bump per build
+
+	"ContentRoot"  "..\src\Dockable\bin\Publish\Steam\win-x64\"
+	"BuildOutput"  ".\output\"               // SteamPipe logs + chunk cache (gitignored)
+
+	"Depots"
+	{
+		"YOUR_DEPOT_ID"  "depot_build.vdf"
+	}
+}

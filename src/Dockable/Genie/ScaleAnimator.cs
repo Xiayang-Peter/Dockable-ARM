@@ -19,10 +19,12 @@ namespace Dockable.Genie;
 public sealed class ScaleAnimator : IMinimizeAnimator
 {
     private const double DurationMs = 230;
-    private const double TargetTileWidth = 56; // nominal landed size at the dock
 
     /// <summary>Speed multiplier; &gt;1 shortens the duration (faster), &lt;1 lengthens it (slower).</summary>
     public double SpeedMultiplier { get; set; } = 1.0;
+
+    /// <summary>Landed size at the dock (DIP); set from the actual tile width before each play.</summary>
+    public double TargetTileWidth { get; set; } = 56;
 
     private Window? _overlay;
     private Image? _image;

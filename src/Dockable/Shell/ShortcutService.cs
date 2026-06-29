@@ -208,8 +208,7 @@ public static class ShortcutService
             if (hr.Failed || shellItem is not IShellItemImageFactory factory)
                 return null;
 
-            // UWP/Store tile images (AppsFolder) come back vertically flipped vs file icons.
-            bool flipVertical = path.StartsWith("shell:AppsFolder", StringComparison.OrdinalIgnoreCase);
+            bool isUwp = path.StartsWith("shell:AppsFolder", StringComparison.OrdinalIgnoreCase);
 
             var size = new Windows.Win32.Foundation.SIZE(pixelSize, pixelSize);
 
@@ -219,7 +218,7 @@ public static class ShortcutService
 
             // For UWP/Store apps, force the icon (logo) representation. Without this the shell may return
             // a "plated" thumbnail with a light square background baked behind the logo (e.g. Settings).
-            if (flipVertical)
+            if (isUwp)
                 flags |= SIIGBF.SIIGBF_ICONONLY;
 
             // For uncached items the shell extracts the image asynchronously and the first
@@ -239,7 +238,7 @@ public static class ShortcutService
 
                 try
                 {
-                    return ConvertHBitmap(hbmp, flipVertical);
+                    return ConvertHBitmap(hbmp);
                 }
                 finally
                 {
@@ -332,7 +331,7 @@ public static class ShortcutService
     /// Copies a 32bpp DIB (as produced by GetImage, premultiplied BGRA) into a frozen
     /// WriteableBitmap, preserving the alpha channel and handling row orientation.
     /// </summary>
-    private static unsafe ImageSource? ConvertHBitmap(HBITMAP hbmp, bool flipVertical = false)
+    private static unsafe ImageSource? ConvertHBitmap(HBITMAP hbmp)
     {
         DIBSECTION ds = default;
         int written = PInvoke.GetObject((HGDIOBJ)(void*)hbmp, sizeof(DIBSECTION), &ds);
@@ -349,11 +348,11 @@ public static class ShortcutService
         byte[] buffer = new byte[byteCount];
         Marshal.Copy((IntPtr)ds.dsBm.bmBits, buffer, 0, byteCount);
 
-        // A negative biHeight means the DIB is top-down (the common case for GetImage); a positive
-        // biHeight is bottom-up and must be flipped row-by-row. Some shell sources (notably UWP/Store
-        // AppsFolder tile images) report orientation inconsistently and come out upside down, so
-        // flipVertical inverts the decision for those.
-        if ((ds.dsBmih.biHeight > 0) ^ flipVertical)
+        // The DIB's row order is given by biHeight: negative = top-down (the common case for GetImage,
+        // and what WritePixels expects), positive = bottom-up and must be flipped row-by-row. This holds
+        // uniformly for file icons AND UWP/Store AppsFolder images — don't special-case by app type (an
+        // earlier per-UWP override XOR'd this and flipped them upside down — e.g. Calculator, Xbox).
+        if (ds.dsBmih.biHeight > 0)
             FlipRowsInPlace(buffer, stride, height);
 
         var bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Pbgra32, null);

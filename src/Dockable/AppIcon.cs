@@ -1,3 +1,4 @@
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace Dockable;
@@ -14,6 +15,9 @@ internal static class AppIcon
 
     /// <summary>32px app icon, sized for the system tray.</summary>
     public static BitmapImage Tray { get; } = Load("Assets/Dockable-32.png");
+
+    /// <summary>The macOS-style Settings icon used by the built-in Dock Preferences tile.</summary>
+    public static ImageSource Preferences { get; } = Load("Assets/Settings_icon.png");
 
     private static BitmapImage Load(string relativePath)
     {

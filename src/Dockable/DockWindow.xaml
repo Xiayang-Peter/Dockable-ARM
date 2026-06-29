@@ -24,6 +24,7 @@
         <conv:FallbackVisibilityConverter x:Key="FallbackVis" />
         <conv:LabelOpenConverter x:Key="LabelOpen" />
         <conv:AllTrueToVisibilityConverter x:Key="AllTrueToVis" />
+        <conv:MultiplyConverter x:Key="Multiply" />
 
         <!-- Theme brushes (light defaults; ApplyTheme() swaps these at runtime for light/dark). -->
         <SolidColorBrush x:Key="BarBackgroundBrush" Color="#33FFFFFF" />
@@ -32,6 +33,11 @@
         <SolidColorBrush x:Key="RunningDotBrush" Color="#B3000000" />
         <SolidColorBrush x:Key="FallbackBgBrush" Color="#1F000000" />
         <SolidColorBrush x:Key="FallbackTextBrush" Color="#CC000000" />
+
+        <!-- Hover label + Remove tag (themed in ApplyTheme; light defaults here). -->
+        <SolidColorBrush x:Key="LabelBgBrush" Color="#F2F7F7FA" />
+        <SolidColorBrush x:Key="LabelBorderBrush" Color="#22000000" />
+        <SolidColorBrush x:Key="LabelTextBrush" Color="#1D1D1F" />
 
         <!-- Icon drop-shadow opacities (light defaults; subtle). ApplyTheme() swaps per theme. -->
         <sys:Double x:Key="IconShadowOuterOpacity">0.10</sys:Double>
@@ -44,8 +50,7 @@
                   Background="Transparent"
                   PreviewMouseLeftButtonDown="DockItem_PreviewMouseDown"
                   MouseLeftButtonUp="DockItem_Click"
-                  PreviewMouseRightButtonUp="DockItem_RightClick"
-                  MouseEnter="DockItem_MouseEnter">
+                  PreviewMouseRightButtonUp="DockItem_RightClick">
                 <Grid.Style>
                     <Style TargetType="Grid">
                         <!-- Launcher icons use the regular arrow pointer (they're not links). Separators
@@ -153,9 +158,63 @@
                     </Ellipse.Visibility>
                 </Ellipse>
 
-                <!-- The hover label is a single shared popup (see RootCanvas) positioned per-frame,
-                     not a per-item popup, so it can track the magnified icon's center smoothly. -->
+                <!-- Per-icon hover label: each icon owns its label, so moving between icons cross-fades
+                     cleanly instead of swapping one shared popup's text (which "jumped"). It sits above
+                     the icon (Bottom edge only), is themed via DynamicResource, and is click-through.
+                     Starts transparent; the DataTemplate triggers fade it in/out on hover.
+
+                     Hosted in a Canvas so it measures with unbounded width (long names like "Google
+                     Chrome" aren't clipped to the narrow icon cell). It's centred over the icon by
+                     placing it at half the icon width, then translated back by half its own width. -->
+                <Canvas IsHitTestVisible="False">
+                    <StackPanel x:Name="HoverLabel"
+                                Canvas.Left="{Binding RenderWidth, Converter={StaticResource Multiply}, ConverterParameter=0.5}"
+                                Canvas.Top="-39"
+                                Opacity="0">
+                        <StackPanel.RenderTransform>
+                            <TranslateTransform X="{Binding ActualWidth, ElementName=HoverLabel, Converter={StaticResource Multiply}, ConverterParameter=-0.5}" />
+                        </StackPanel.RenderTransform>
+                        <StackPanel.Visibility>
+                            <MultiBinding Converter="{StaticResource AllTrueToVis}">
+                                <Binding Path="ShowLabel" />
+                                <Binding Path="DataContext.HoverLabelsEnabled" RelativeSource="{RelativeSource AncestorType=Window}" />
+                            </MultiBinding>
+                        </StackPanel.Visibility>
+                        <Border CornerRadius="7" Padding="10,4"
+                                Background="{DynamicResource LabelBgBrush}"
+                                BorderBrush="{DynamicResource LabelBorderBrush}" BorderThickness="1">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.4" Color="#000000" />
+                            </Border.Effect>
+                            <TextBlock Text="{Binding DisplayName}" Foreground="{DynamicResource LabelTextBrush}"
+                                       FontSize="12" TextOptions.TextFormattingMode="Ideal" />
+                        </Border>
+                        <Path HorizontalAlignment="Center" Margin="0,-1.5,0,0"
+                              Fill="{DynamicResource LabelBgBrush}" Data="M 0,0 L 14,0 L 7,7 Z" />
+                    </StackPanel>
+                </Canvas>
             </Grid>
+            <DataTemplate.Triggers>
+                <!-- Fade the hovered icon's label in; fade it out when the cursor leaves. -->
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Trigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HoverLabel" Storyboard.TargetProperty="Opacity"
+                                                 To="1" Duration="0:0:0.12" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </Trigger.EnterActions>
+                    <Trigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="HoverLabel" Storyboard.TargetProperty="Opacity"
+                                                 To="0" Duration="0:0:0.16" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </Trigger.ExitActions>
+                </Trigger>
+            </DataTemplate.Triggers>
         </DataTemplate>
 
         <!-- Each item container is absolutely positioned and sized by the layout engine. -->
@@ -165,6 +224,11 @@
             <Setter Property="Width" Value="{Binding RenderWidth}" />
             <Setter Property="Height" Value="{Binding RenderSize}" />
             <Style.Triggers>
+                <!-- The hovered icon (and its label) render above neighbours so a long label isn't
+                     covered by the next icon. -->
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Panel.ZIndex" Value="900" />
+                </Trigger>
                 <!-- While dragging, the in-canvas tile is hidden; the floating ghost popup
                      (which can roam outside the dock window) represents it. The slot stays
                      reserved as a gap so the others part. -->
@@ -177,8 +241,35 @@
     </Window.Resources>
 
     <Canvas x:Name="RootCanvas">
-        <!-- Translucent "glass" dock bar (rounded, widens with magnification). True backdrop
-             blur is a follow-up; this dark-glass styling is the v1 look. -->
+        <!-- Liquid Glass (real refraction): the captured backdrop behind the bar, refracted by a
+             pixel shader (attached in code, gated on shader availability). Sits BEHIND DockBackground
+             so the translucent bar + border render over it. Background is auto-clipped to the rounded
+             corners. Click-through; shown only in LiquidGlass mode. -->
+        <!-- A parent clip with the bar's rounded geometry clips the shader's OUTPUT (the displacement
+             would otherwise pull opaque pixels into the corners, squaring them). GlassClipGeometry.Rect
+             is kept in sync with the bar size in code (SyncAcrylic / CaptureGlassBackdrop). -->
+        <Canvas x:Name="GlassClipHost"
+                Canvas.Left="{Binding BarLeft}"
+                Canvas.Top="{Binding BarTop}"
+                Width="{Binding BarWidth}"
+                Height="{Binding BarHeight}"
+                IsHitTestVisible="False">
+            <Canvas.Clip>
+                <RectangleGeometry x:Name="GlassClipGeometry" RadiusX="24" RadiusY="24" />
+            </Canvas.Clip>
+            <Border x:Name="GlassRefract"
+                    Width="{Binding BarWidth}"
+                    Height="{Binding BarHeight}"
+                    CornerRadius="24"
+                    Visibility="Collapsed">
+                <Border.Background>
+                    <ImageBrush x:Name="GlassBackdropBrush" Stretch="Fill" />
+                </Border.Background>
+            </Border>
+        </Canvas>
+
+        <!-- Translucent "glass" dock bar (rounded, widens with magnification). In Liquid Glass mode this
+             is the Simple translucent overlay + border drawn on top of the refraction beneath it. -->
         <Border x:Name="DockBackground"
                 Canvas.Left="{Binding BarLeft}"
                 Canvas.Top="{Binding BarTop}"
@@ -192,6 +283,57 @@
                 <!-- box-shadow: 0 10px 30px rgba(0,0,0,0.15) light / 0.4 dark (Opacity set in ApplyTheme) -->
                 <DropShadowEffect x:Name="BarShadow" BlurRadius="30" ShadowDepth="10" Direction="270" Opacity="0.15" Color="#000000" />
             </Border.Effect>
+        </Border>
+
+        <!-- Liquid Glass: a curved-rim highlight + top specular sheen layered over the acrylic. The
+             middle stays clear so the blur shows through ("flat center, glassy edge"). Click-through;
+             shown only in LiquidGlass mode (toggled in ApplyGlassEffect). -->
+        <Border x:Name="GlassRim"
+                Canvas.Left="{Binding BarLeft}"
+                Canvas.Top="{Binding BarTop}"
+                Width="{Binding BarWidth}"
+                Height="{Binding BarHeight}"
+                CornerRadius="24"
+                BorderThickness="1.5"
+                IsHitTestVisible="False"
+                Visibility="Collapsed">
+            <Border.BorderBrush>
+                <!-- Bright rim light at the top edge, fading down — reads as a curved glass edge. -->
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Offset="0"   Color="#C8FFFFFF" />
+                    <GradientStop Offset="0.5" Color="#28FFFFFF" />
+                    <GradientStop Offset="1"   Color="#55FFFFFF" />
+                </LinearGradientBrush>
+            </Border.BorderBrush>
+            <Border.Background>
+                <!-- Top specular sheen → clear middle (acrylic shows through) → faint base glow. -->
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Offset="0"    Color="#3CFFFFFF" />
+                    <GradientStop Offset="0.32" Color="#0AFFFFFF" />
+                    <GradientStop Offset="0.7"  Color="#00FFFFFF" />
+                    <GradientStop Offset="1"    Color="#16FFFFFF" />
+                </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+
+        <!-- A slow diagonal highlight that drifts across the glass (the "liquid" motion). Its bright
+             band is the middle gradient stop, swept by an animation started/stopped in ApplyGlassEffect.
+             Border.Background is clipped to the rounded corners automatically. -->
+        <Border x:Name="GlassShimmer"
+                Canvas.Left="{Binding BarLeft}"
+                Canvas.Top="{Binding BarTop}"
+                Width="{Binding BarWidth}"
+                Height="{Binding BarHeight}"
+                CornerRadius="24"
+                IsHitTestVisible="False"
+                Visibility="Collapsed">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Offset="0" Color="#00FFFFFF" />
+                    <GradientStop x:Name="ShimmerStop" Offset="0" Color="#22FFFFFF" />
+                    <GradientStop Offset="1" Color="#00FFFFFF" />
+                </LinearGradientBrush>
+            </Border.Background>
         </Border>
 
         <ItemsControl ItemsSource="{Binding Items}"
@@ -220,25 +362,25 @@
                IsHitTestVisible="False"
                IsOpen="False">
             <StackPanel x:Name="GhostRoot" Width="160">
-                <!-- "Remove" tag (macOS-style balloon + downward arrow). Reserves its 42px row
-                     even when hidden, so arming it never shifts the icon. -->
+                <!-- "Remove" tag (themed balloon + downward arrow). Reserves its 42px row even when
+                     hidden, so arming it never shifts the icon. Opacity is faded in/out in code. -->
                 <Grid Height="42">
                     <StackPanel x:Name="GhostRemoveTag"
                                 VerticalAlignment="Bottom"
                                 HorizontalAlignment="Center"
-                                Visibility="Hidden">
+                                Opacity="0">
                         <Border CornerRadius="7"
                                 Padding="10,4"
-                                Background="#F0C0392B"
-                                BorderBrush="#55FFFFFF"
+                                Background="{DynamicResource LabelBgBrush}"
+                                BorderBrush="{DynamicResource LabelBorderBrush}"
                                 BorderThickness="1">
                             <Border.Effect>
-                                <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.55" Color="#000000" />
+                                <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.4" Color="#000000" />
                             </Border.Effect>
-                            <TextBlock Text="Remove" Foreground="#FFFFFFFF" FontSize="12" FontWeight="SemiBold" />
+                            <TextBlock Text="Remove" Foreground="{DynamicResource LabelTextBrush}" FontSize="12" FontWeight="SemiBold" />
                         </Border>
                         <Path HorizontalAlignment="Center" Margin="0,-1.5,0,0"
-                              Fill="#F0C0392B" Data="M 0,0 L 14,0 L 7,7 Z" />
+                              Fill="{DynamicResource LabelBgBrush}" Data="M 0,0 L 14,0 L 7,7 Z" />
                     </StackPanel>
                 </Grid>
 
@@ -253,29 +395,5 @@
             </StackPanel>
         </Popup>
 
-        <!-- Shared hover label: one popup, positioned per-frame (UpdateHoverLabel) centered above
-             the hovered icon at its fully-magnified height. Click-through so it never steals hover. -->
-        <Popup x:Name="LabelPopup"
-               Placement="Relative"
-               PlacementTarget="{Binding ElementName=RootCanvas}"
-               AllowsTransparency="True"
-               StaysOpen="True"
-               PopupAnimation="Fade"
-               IsHitTestVisible="False"
-               IsOpen="False"
-               Opened="LabelPopup_Opened">
-            <StackPanel Margin="10,10,10,0">
-                <Border CornerRadius="7" Padding="10,4"
-                        Background="#F02A2A30" BorderBrush="#33FFFFFF" BorderThickness="1">
-                    <Border.Effect>
-                        <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.55" Color="#000000" />
-                    </Border.Effect>
-                    <TextBlock x:Name="LabelText" Foreground="#FFF2F2F2" FontSize="12"
-                               TextOptions.TextFormattingMode="Ideal" />
-                </Border>
-                <Path HorizontalAlignment="Center" Margin="0,-1.5,0,0"
-                      Fill="#F02A2A30" Data="M 0,0 L 14,0 L 7,7 Z" />
-            </StackPanel>
-        </Popup>
     </Canvas>
 </Window>
