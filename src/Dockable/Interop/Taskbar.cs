@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Dockable.Models;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Shell;
@@ -58,17 +59,44 @@ public static class Taskbar
     }
 
     /// <summary>
+    /// Applies the chosen taskbar visibility: Always (shown, auto-hide off), Auto (native auto-hide —
+    /// reveals on edge hover), or Never (fully hidden, no hover reveal). Best-effort; non-fatal on failure.
+    /// </summary>
+    public static void SetVisibility(TaskbarVisibility mode)
+    {
+        switch (mode)
+        {
+            case TaskbarVisibility.Always:
+                EnsureTrayWindowsShown();
+                SetState(autoHide: false);
+                break;
+            case TaskbarVisibility.Never:
+                // Disable auto-hide first so the OS won't re-reveal on hover, then hide the windows.
+                SetState(autoHide: false);
+                Hide();
+                break;
+            default: // Auto
+                EnsureTrayWindowsShown();
+                SetState(autoHide: true);
+                break;
+        }
+    }
+
+    /// <summary>
     /// Turns the taskbar's auto-hide on (it slides away and reveals on edge hover) or off
     /// (restores the normal always-visible taskbar). Best-effort; non-fatal on failure.
     /// </summary>
     public static void SetAutoHide(bool enable)
     {
+        // Undo any force-hide (auto-hide only works on a shown window) and (re)assert the state.
+        EnsureTrayWindowsShown();
+        SetState(enable);
+    }
+
+    private static void SetState(bool autoHide)
+    {
         try
         {
-            // Undo any legacy force-hide (older builds used ShowWindow(SW_HIDE)); auto-hide only
-            // works on a window that is itself shown.
-            EnsureTrayWindowsShown();
-
             HWND tray = PInvoke.FindWindow(PrimaryClass, null!);
             if (tray.IsNull)
                 return;
@@ -77,13 +105,13 @@ public static class Taskbar
             {
                 cbSize = (uint)Marshal.SizeOf<APPBARDATA>(),
                 hWnd = tray,
-                lParam = new LPARAM(enable ? ABS_AUTOHIDE : ABS_ALWAYSONTOP),
+                lParam = new LPARAM(autoHide ? ABS_AUTOHIDE : ABS_ALWAYSONTOP),
             };
             PInvoke.SHAppBarMessage(PInvoke.ABM_SETSTATE, ref data);
         }
         catch
         {
-            // Toggling auto-hide is best-effort; never let it crash the app.
+            // Setting the appbar state is best-effort; never let it crash the app.
         }
     }
 

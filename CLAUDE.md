@@ -31,8 +31,8 @@ Code session here — read it first; it captures everything not obvious from the
   `net9.0-windows10.0.22621.0`, **x64**, WPF, unpackaged.
 - **Stop the running app before building** — the running `Dockable.exe` locks the output, so the
   build fails at the copy step (compilation still succeeds; look for `: error CS`, not MSB copy
-  errors). The user often has it running while testing; if the build is only blocked by the lock,
-  the code is fine — tell them to close it. Don't kill their instance unless they ask.
+  errors). **For Debug builds it's fine to kill the app yourself first** (standing permission from the
+  user) so the copy step doesn't fail — just run the stop command before building.
   Stop command: `Get-Process Dockable -ErrorAction SilentlyContinue | Stop-Process -Force`.
   Only one dock runs (single-instance Mutex); no watchdog process anymore. Force-killing is safe:
   the taskbar uses native auto-hide, so it stays usable even if exit handlers don't run.
@@ -115,6 +115,11 @@ src/Dockable/
                          (Light/Dark/Auto tiles), Dock (Size/Magnification, Position, Glass Effect,
                          Minimize effect, Effect Speed, toggles), Taskbar. Most rows are wired live
                          (Position only implements Bottom).
+  MenuBarWindow.xaml(.cs) Optional macOS-style menu bar: a thin top AppBar (primary monitor) showing the
+                         focused window's title, a clickable keyboard-layout switcher, Quick-Settings
+                         (Win+A) + Notifications (Win+N) buttons, and a clock. Its own AppBarManager
+                         (WM_USER+2) + AcrylicBackdrop + ApplyTheme; no magnification/clipping (window ==
+                         bar). Owned by App (created/closed per Settings.ShowMenuBar). See feature area below.
   AboutWindow.xaml(.cs)  "About Dockable": icon, version (reflection), localized stack/inspiration
                          blurb, and a GitHub hyperlink crediting Jezz Lucena.
   ConfirmDialog.cs       Code-built Yes/No prompt with optional "Do not ask again".
@@ -135,6 +140,7 @@ src/Dockable/
     DockSettings.cs      Root settings + DockEdge/GlassEffect/DockTheme/MinimizeEffect enums
                          (see Settings schema below).
   ViewModels/
+    MenuBarViewModel.cs  Menu bar state: shared DockSettings (theme/glass) + live Title/KeyboardLabel/TimeText.
     DockViewModel.cs     Owns Items (ObservableCollection), Settings, geometry props; composes
                          sections (Start + apps + separator + minimized) and reconciles in place;
                          taskbar-app refresh + matching; dock-owned pin mutations.
@@ -148,6 +154,16 @@ src/Dockable/
                          (IShellItemImageFactory → 256px, alpha-correct, off UI thread, E_PENDING retry).
   Interop/
     StartMenu.cs         Open Start via synthesized Win keypress (SendInput).
+    QuickSettings.cs     Open the OS Quick Settings flyout (network/sound) via synthesized Win+A.
+    Notifications.cs     Open the OS Notification Center / calendar flyout via synthesized Win+N.
+    TrayOverflow.cs      Open the system-tray overflow ("show hidden icons") flyout via synthesized
+                         Win+B (focus the tray, reveal the taskbar) then Enter (activate the chevron).
+    SystemActions.cs     Menu-bar Windows-logo menu power/session actions: Sleep (SetSuspendState),
+                         Lock (LockWorkStation), Restart/ShutDown/LogOut (shell out to shutdown.exe).
+    TitleWatcher.cs      SetWinEventHook(EVENT_SYSTEM_FOREGROUND + EVENT_OBJECT_NAMECHANGE) → TitleChanged
+                         (menu bar's live focused-window title).
+    KeyboardLayouts.cs   Current layout (GetKeyboardLayout) + installed list (GetKeyboardLayoutList) +
+                         switch the foreground app (PostMessage WM_INPUTLANGCHANGEREQUEST).
     Monitors.cs          Per-monitor bounds/workarea (px) + DPI for a window.
     AppBarManager.cs     SHAppBarMessage register/reserve (always-visible docking).
     Taskbar.cs           Toggle the taskbar's NATIVE auto-hide (SHAppBarMessage ABM_SETSTATE);
@@ -158,6 +174,8 @@ src/Dockable/
     WindowFilter.cs      Shared "is this a normal app window" test (internal; takes HWND).
     MinimizeHook.cs      SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART) → WindowMinimizing event.
     ForegroundWatcher.cs SetWinEventHook(EVENT_SYSTEM_FOREGROUND) → ForegroundChanged event.
+    Fullscreen.cs        Shared test: is the foreground window covering a given window's monitor
+                         (exclusive or borderless-fullscreen)? Used by the dock + menu bar to hide.
     WindowControl.cs     Per-window transitions suppression, restore, activate, restore-rect.
     SystemTheme.cs       Reads the Windows light/dark app theme (registry AppsUseLightTheme).
     StartupManager.cs    HKCU Run-key "run at login" entries (IsEnabled/Enable/Disable).
@@ -224,7 +242,8 @@ src/Dockable/
 | `MaxIconSize` | 96 | Max magnified size. |
 | `MagnificationRadius` | 160 | Cursor influence radius (DIP). |
 | `MagnificationEnabled` | true | Fisheye magnification on/off. |
-| `HideTaskbar` | **true** | Enable the taskbar's native auto-hide while running (reveals on edge hover). |
+| `TaskbarVisibility` | `Auto` | `TaskbarVisibility`: Always (visible) / Auto (native auto-hide, reveal on hover) / Never (fully hidden). Pre-launch state restored on exit/crash. |
+| `ShowMenuBar` | false | Show the macOS-style top menu bar (opt-in; reserves a strip at the top of the primary monitor). |
 | `ShowRunningIndicators` | true | Show the running-dot under apps with open windows. |
 | `AnimateOpeningApps` | true | Bounce an app's icon when it gains a new window. |
 | `MinimizeIntoIcon` | false | Minimize into the app's dock icon instead of a separate tile. |
@@ -365,16 +384,71 @@ src/Dockable/
   overlay covers it; DRM/protected windows capture black; stale tiles if an app closes while
   minimized (needs a destroy hook); multi-monitor genie target approximate.
 
-### Taskbar auto-hide + restore safety
-- Tray toggle "Hide taskbar" (`HideTaskbar`, default **on**): `Interop/Taskbar.SetAutoHide(true)`
-  enables the taskbar's **native auto-hide** via `SHAppBarMessage(ABM_SETSTATE, ABS_AUTOHIDE)`. The
-  OS then slides the taskbar away and reveals it when the cursor reaches the screen edge — there is
-  no custom 1s reveal timer (native reveals on edge contact). `SetAutoHide` also `SW_SHOW`s the tray
-  windows first, to undo any legacy force-hide left by older builds.
-- **Self-restoring**: auto-hide is a normal, usable Windows state, so a force-kill or hard crash
-  leaves the taskbar working (reveals on hover) rather than vanishing. On clean exit
-  (`DockWindow.OnClosed` + `App.OnExit`) and managed crash (`AppDomain.UnhandledException`) we set
-  auto-hide back **off** (`ABS_ALWAYSONTOP`). No watchdog process is needed (removed).
+### macOS-style menu bar (top AppBar) — optional, off by default
+- Enabled via `DockSettings.ShowMenuBar` (Dock Preferences toggle or tray "Show menu bar"). **App owns
+  the window's lifetime** (`App.SetMenuBarVisible`): the dock's `SetShowMenuBar` persists the setting and
+  calls into `App`; the menu bar is created on first show and `Close()`d (which `Unregister()`s its AppBar)
+  when toggled off. `ShutdownMode=OnExplicitShutdown`, so adding/closing this window is safe.
+- `MenuBarWindow` is a sibling of `DockWindow` but **much simpler**: a flat full-width bar flush to the
+  top of the **primary monitor** (window rect == bar rect, so **no `SetWindowRgn` clipping** and no
+  magnification). Its own `AppBarManager(_hwnd, WM_USER+2)` reserves the top strip (`MenuBarHeight`, 28 DIP)
+  via `ReserveEdge(DockEdge.Top, …)`; `WndProc` handles `ABN_POSCHANGED` (re-reserve) + `WM_SETTINGCHANGE`
+  (re-theme when System). **Always acrylic**: reuses `AcrylicBackdrop` (corner radius 0), always shown
+  (independent of the dock's Glass Effect setting). **No border.** `ApplyTheme()` paints the bar with the
+  dock's own bar colours at **50% transparency** (light `#80FFFFFF`, dark `#80242424`) over the blur, and
+  swaps `MenuTextBrush` to contrast per the Appearance theme (dark `#F2F2F2` / light `#1D1D1F`).
+- Content: **leading** = a Windows 11 logo (same geometry as the dock's Start tile, tinted with
+  `MenuTextBrush`; click → an Apple-menu-style command `ContextMenu` built fresh each open:
+  About This PC (`ms-settings:about`) / System Settings (`ms-settings:`) / Microsoft Store / **Recent
+  Apps** submenu (open apps grouped by exe/AUMID; pick one → `WindowControl.ActivateAll` raises all its
+  windows) / Force Quit \<focused app\> (`Process.Kill`) / Sleep / Restart… / Shut Down… / Lock Screen /
+  Log Out \<user\>… — power/session items via `Interop/SystemActions`; the "…" ones confirm via
+  `ConfirmDialog(showDoNotAskAgain:false)`) then the focused app's **friendly display name** — e.g.
+  "Google Chrome" (not "chrome", not the window title), resolved by `Shell/ForegroundApp`: UWP/Store apps
+  via the window's AUMID → `shell:AppsFolder` name (the dock's approach — the host ApplicationFrameHost
+  exe isn't the app), else the exe's `FileVersionInfo.FileDescription` (→ shell name → title-cased stem →
+  window-title fallbacks). The bar tracks the last real app (`_appHwnd`, via `Interop/TitleWatcher`,
+  skipping our own process). **Click the name** → the focused window's title-bar menu, reproduced by
+  posting the non-client right-click messages (`WM_NCRBUTTONDOWN`/`WM_NCRBUTTONUP` with `HTCAPTION`) to
+  the target so its **own** `DefWindowProc` shows the menu in its process (a cross-process
+  `GetSystemMenu`+`TrackPopupMenu` doesn't work — the menu is owned by the other process; this also
+  honours custom title-bar menus like Chrome's). `SetForegroundWindow(target)` first so it tracks/dismisses
+  correctly. **Trailing** cluster (a clock
+  `DispatcherTimer`, 1 s): a **tray-overflow chevron** (`TrayOverflow.Open` — synthesizes Win+B then Enter
+  to open the "show hidden icons" flyout; reveals the auto-hidden taskbar), **Quick Settings** (`QuickSettings.Open` → Win+A),
+  **Notifications** (`Notifications.Open` → Win+N), a clickable **keyboard layout** (`KeyboardLayouts`: shows the foreground
+  thread's layout; click → a code-built `ContextMenu` of installed layouts → `Switch` posts
+  `WM_INPUTLANGCHANGEREQUEST` to the foreground), and the **clock** (culture-aware, follows `Loc`).
+- **Full-screen hide:** like the dock, the menu bar hides itself + its backdrop while a full-screen or
+  borderless-fullscreen app (game/video) owns its monitor (`Interop/Fullscreen` test, re-checked on
+  foreground change, the 1 s clock tick, and `ABN_FULLSCREENAPP`); it reappears when that window goes away.
+  Two things make this robust (both windows): (1) while hidden, the **reserved AppBar strip is released**
+  (`_appBar.Unregister()`, re-reserved on restore) — otherwise the game resizes to the work area to avoid
+  our strip, stops covering the monitor, and the detection flip-flops; (2) `UpdateFullscreenState` ignores
+  the case where **our own process is foreground** (`Fullscreen.IsForegroundOwnProcess`), so clicking the
+  bar/dock over a game doesn't un-hide it.
+- **Why there's no live system-tray icon replication:** a read-only spike on **Windows 11 25H2 (build
+  26200)** found the classic notification-area path **gone** — `SysPager`/`ToolbarWindow32`/
+  `NotifyIconOverflowWindow` don't exist, and the icons live in `explorer.exe` XAML islands that expose
+  **0 invokable buttons** to UI Automation under `Shell_TrayWnd`. So cross-process `ToolbarWindow32` reads
+  (and a UIA fallback) both yield nothing on current Windows. Per user decision, the tray area is instead
+  the reliable, update-proof **Quick Settings + Notifications** flyout shortcuts above. (Probe scripts were
+  one-off; not kept in the repo.) Caveat: the OS anchors those flyouts to the bottom-right tray — they
+  can't be repositioned under the menu-bar icons.
+
+### Taskbar visibility + restore safety
+- **Three states** (`DockSettings.TaskbarVisibility`, default **Auto**), set from Dock Preferences →
+  Taskbar (a combo: Always / Auto / Never) or the tray "Windows taskbar" submenu, applied by
+  `DockWindow.SetTaskbarVisibility` → `Interop/Taskbar.SetVisibility`:
+  - **Always** — `SW_SHOW` the tray windows + `ABM_SETSTATE, ABS_ALWAYSONTOP` (auto-hide off, visible).
+  - **Auto** — `SW_SHOW` + `ABM_SETSTATE, ABS_AUTOHIDE`: the OS slides it away and reveals on edge hover
+    (no custom timer).
+  - **Never** — `ABS_ALWAYSONTOP` (so it won't reveal on hover) then `SW_HIDE` the tray windows.
+- **Restore on exit/crash**: `Taskbar.CaptureOriginalState()` records the pre-launch auto-hide state;
+  `Restore()` (clean exit via `DockWindow.OnClosed` + `App.OnExit`, and managed crash via
+  `AppDomain.UnhandledException`) puts it back. **Auto** is self-restoring even on a hard force-kill
+  (a usable state); **Never** is NOT — a hard kill that skips handlers leaves the taskbar `SW_HIDE`-n
+  (acceptable per the user's explicit ask for a fully-hidden option).
 - Note the **conflict to watch**: the dock also lives at the bottom, so revealing the native taskbar
   pops it up over/under the dock at the same edge. Accepted per user request (taskbar on demand).
 

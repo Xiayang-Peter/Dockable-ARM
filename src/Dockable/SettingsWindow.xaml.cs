@@ -33,18 +33,20 @@ public partial class SettingsWindow : Window
     private readonly DockViewModel _vm;
     private readonly Action<DockTheme> _setTheme;
     private readonly Action<DockEdge> _setEdge;
-    private readonly Action<bool> _setHideTaskbar;
+    private readonly Action<TaskbarVisibility> _setTaskbarVisibility;
     private readonly Action<GlassEffect> _setGlassEffect;
+    private readonly Action<bool> _setShowMenuBar;
     private bool _initializing;
 
     public SettingsWindow(DockViewModel vm, Action<DockTheme> setTheme, Action<DockEdge> setEdge,
-        Action<bool> setHideTaskbar, Action<GlassEffect> setGlassEffect)
+        Action<TaskbarVisibility> setTaskbarVisibility, Action<GlassEffect> setGlassEffect, Action<bool> setShowMenuBar)
     {
         _vm = vm;
         _setTheme = setTheme;
         _setEdge = setEdge;
-        _setHideTaskbar = setHideTaskbar;
+        _setTaskbarVisibility = setTaskbarVisibility;
         _setGlassEffect = setGlassEffect;
+        _setShowMenuBar = setShowMenuBar;
         _initializing = true; // set before InitializeComponent so initial events no-op
         InitializeComponent();
         Icon = AppIcon.Large;
@@ -75,7 +77,8 @@ public partial class SettingsWindow : Window
         IndicatorsSwitch.IsChecked = s.ShowRunningIndicators;
         AnimateOpeningSwitch.IsChecked = s.AnimateOpeningApps;
         MinimizeIntoIconSwitch.IsChecked = s.MinimizeIntoIcon;
-        HideTaskbarSwitch.IsChecked = s.HideTaskbar;
+        ShowMenuBarSwitch.IsChecked = s.ShowMenuBar;
+        TaskbarCombo.SelectedIndex = (int)s.TaskbarVisibility; // Always, Auto, Never (matches combo order)
 
         _initializing = false;
 
@@ -207,10 +210,14 @@ public partial class SettingsWindow : Window
     private void IndicatorsSwitch_Click(object sender, RoutedEventArgs e)
         => _vm.SetShowRunningIndicators(IndicatorsSwitch.IsChecked == true);
 
-    // On → the taskbar auto-hides while Dockable runs; off → it stays visible. The dock applies and
-    // persists it (and restores the taskbar to its pre-launch state on close).
-    private void HideTaskbarSwitch_Click(object sender, RoutedEventArgs e)
-        => _setHideTaskbar(HideTaskbarSwitch.IsChecked == true);
+    // Always / Auto (native auto-hide) / Never. The dock applies and persists it (and restores the
+    // taskbar to its pre-launch state on close).
+    private void TaskbarCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing)
+            return;
+        _setTaskbarVisibility((TaskbarVisibility)TaskbarCombo.SelectedIndex);
+    }
 
     private void AnimateOpeningSwitch_Click(object sender, RoutedEventArgs e)
     {
@@ -223,6 +230,11 @@ public partial class SettingsWindow : Window
         _vm.Settings.MinimizeIntoIcon = MinimizeIntoIconSwitch.IsChecked == true;
         _vm.Save();
     }
+
+    // The dock owns the menu bar window's lifetime, so route through its callback (it persists the
+    // setting and creates/closes the window).
+    private void ShowMenuBarSwitch_Click(object sender, RoutedEventArgs e)
+        => _setShowMenuBar(ShowMenuBarSwitch.IsChecked == true);
 
     // --- Position on screen ---
 

@@ -31,6 +31,19 @@ public enum DockTheme
     Dark,
 }
 
+/// <summary>How the Windows taskbar is shown while Dockable runs.</summary>
+public enum TaskbarVisibility
+{
+    /// <summary>Always visible (auto-hide off).</summary>
+    Always,
+
+    /// <summary>Native auto-hide: slides away, reveals on edge hover (default).</summary>
+    Auto,
+
+    /// <summary>Hidden entirely — won't even reveal on hover.</summary>
+    Never,
+}
+
 /// <summary>How a window animates as it minimizes into / restores from the dock.</summary>
 public enum MinimizeEffect
 {
@@ -83,8 +96,19 @@ public sealed class DockSettings
     /// <summary>Whether the macOS-style fisheye magnification is enabled (Phase 2).</summary>
     public bool MagnificationEnabled { get; set; } = true;
 
-    /// <summary>Forcefully hide the Windows taskbar while Dockable is running.</summary>
-    public bool HideTaskbar { get; set; } = true;
+    /// <summary>
+    /// How the Windows taskbar is shown while Dockable runs: Always (visible), Auto (native auto-hide,
+    /// reveal on hover — the default), or Never (hidden entirely). The pre-launch state is restored on
+    /// exit/crash.
+    /// </summary>
+    public TaskbarVisibility TaskbarVisibility { get; set; } = TaskbarVisibility.Auto;
+
+    /// <summary>
+    /// Show the macOS-style menu bar: a thin strip docked at the top of the primary monitor with the
+    /// focused window's title, keyboard layout, a quick-settings shortcut, the system tray, and a clock.
+    /// Opt-in (off by default) because it reserves a strip at the top of the screen.
+    /// </summary>
+    public bool ShowMenuBar { get; set; } = false;
 
     /// <summary>Show the running-indicator dot under apps that have open windows.</summary>
     public bool ShowRunningIndicators { get; set; } = true;

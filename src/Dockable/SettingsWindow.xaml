@@ -529,6 +529,14 @@
                                   VerticalAlignment="Center" Click="MinimizeIntoIconSwitch_Click" />
                 </Grid>
 
+                <Border Height="1" Background="#E3E3E3" Margin="16,0,0,0" />
+
+                <Grid Height="44" Margin="16,0">
+                    <TextBlock Text="{loc:Loc Toggle_ShowMenuBar}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
+                    <ToggleButton x:Name="ShowMenuBarSwitch" Style="{StaticResource MacSwitch}" HorizontalAlignment="Right"
+                                  VerticalAlignment="Center" Click="ShowMenuBarSwitch_Click" />
+                </Grid>
+
             </StackPanel>
         </Border>
 
@@ -539,9 +547,13 @@
                 <DropShadowEffect BlurRadius="8" ShadowDepth="1" Opacity="0.12" Color="#000000" />
             </Border.Effect>
             <Grid Height="44" Margin="16,0">
-                <TextBlock Text="{loc:Loc Toggle_HideTaskbar}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
-                <ToggleButton x:Name="HideTaskbarSwitch" Style="{StaticResource MacSwitch}" HorizontalAlignment="Right"
-                              VerticalAlignment="Center" Click="HideTaskbarSwitch_Click" />
+                <TextBlock Text="{loc:Loc Row_ShowTaskbar}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
+                <ComboBox x:Name="TaskbarCombo" Style="{StaticResource MacPopup}" HorizontalAlignment="Right"
+                          VerticalAlignment="Center" SelectionChanged="TaskbarCombo_SelectionChanged">
+                    <ComboBoxItem Content="{loc:Loc Taskbar_Always}" />
+                    <ComboBoxItem Content="{loc:Loc Taskbar_Auto}" />
+                    <ComboBoxItem Content="{loc:Loc Taskbar_Never}" />
+                </ComboBox>
             </Grid>
         </Border>
     </StackPanel>

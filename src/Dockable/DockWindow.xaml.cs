@@ -489,53 +489,32 @@ public partial class DockWindow : Window
     /// </summary>
     private void UpdateFullscreenState()
     {
-        bool fullscreen = IsForegroundFullscreenOnDockMonitor();
+        // Ignore our own UI being focused (a dock click / context menu / popup) — otherwise interacting
+        // with the dock over a full-screen game would un-hide it.
+        if (Fullscreen.IsForegroundOwnProcess(_ownProcessId))
+            return;
+
+        bool fullscreen = Fullscreen.IsForegroundFullscreenOnMonitorOf(_hwnd, _ownProcessId);
         if (fullscreen == _fullscreenActive)
             return;
         _fullscreenActive = fullscreen;
 
         if (fullscreen)
         {
+            // Release the reserved AppBar strip so the game can take the FULL monitor. If we keep it
+            // reserved, the game shrinks to the work area to avoid our strip, stops covering the monitor,
+            // and we'd flip back to visible — the feedback loop. Freeing it keeps the game full-screen.
+            _appBar?.Unregister();
             Hide();
             _acrylic.Hide();
         }
         else
         {
+            ReserveAppBarSpace(); // re-register + reserve the strip
             Show();
             PositionDock();
             ApplyGlassEffect();
         }
-    }
-
-    /// <summary>True when the foreground window covers the dock's monitor (full-screen), excluding the
-    /// desktop/shell and our own windows.</summary>
-    private unsafe bool IsForegroundFullscreenOnDockMonitor()
-    {
-        if (_hwnd == IntPtr.Zero)
-            return false;
-
-        HWND fg = PInvoke.GetForegroundWindow();
-        if (fg.IsNull || fg == (HWND)_hwnd || fg == PInvoke.GetDesktopWindow() || fg == PInvoke.GetShellWindow())
-            return false;
-
-        uint pid = 0;
-        PInvoke.GetWindowThreadProcessId(fg, &pid);
-        if (pid == _ownProcessId) // our backdrop / overlays / popups
-            return false;
-
-        // Only clear the way if the full-screen window is on the dock's own monitor.
-        var fgMon = PInvoke.MonitorFromWindow(fg, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
-        var dockMon = PInvoke.MonitorFromWindow((HWND)_hwnd, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
-        if (fgMon != dockMon)
-            return false;
-
-        if (!PInvoke.GetWindowRect(fg, out RECT r))
-            return false;
-        var mi = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
-        if (!PInvoke.GetMonitorInfo(fgMon, ref mi))
-            return false;
-        var m = mi.rcMonitor;
-        return r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom;
     }
 
     private void ApplyTaskbarVisibility()
@@ -543,9 +522,9 @@ public partial class DockWindow : Window
         if (ViewModel is null)
             return;
 
-        // Native auto-hide: the taskbar slides away but reveals when the cursor reaches the
-        // bottom edge. Self-restoring — a force-kill leaves it usable, so no watchdog is needed.
-        Taskbar.SetAutoHide(ViewModel.Settings.HideTaskbar);
+        // Always / Auto (native auto-hide, reveals on edge hover) / Never (fully hidden). The pre-launch
+        // state is restored on exit/crash.
+        Taskbar.SetVisibility(ViewModel.Settings.TaskbarVisibility);
     }
 
     /// <summary>Anchors the dock flush to its monitor's docked edge, centered along the other axis.</summary>
@@ -1163,14 +1142,23 @@ public partial class DockWindow : Window
         ApplyBehavior();           // move the AppBar reservation, reposition, and re-clip
     }
 
-    private void SetHideTaskbar(bool hide)
+    private void SetTaskbarVisibility(TaskbarVisibility mode)
     {
-        if (ViewModel is null || ViewModel.Settings.HideTaskbar == hide)
+        if (ViewModel is null || ViewModel.Settings.TaskbarVisibility == mode)
             return;
-        ViewModel.Settings.HideTaskbar = hide;
+        ViewModel.Settings.TaskbarVisibility = mode;
         ViewModel.Save();
         ApplyTaskbarVisibility();
         PositionDock(); // bottom reference changed (work area vs full screen)
+    }
+
+    private void SetShowMenuBar(bool show)
+    {
+        if (ViewModel is null || ViewModel.Settings.ShowMenuBar == show)
+            return;
+        ViewModel.Settings.ShowMenuBar = show;
+        ViewModel.Save();
+        App.Current.SetMenuBarVisible(show); // the app owns the menu bar window's lifetime
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -1476,7 +1464,9 @@ public partial class DockWindow : Window
     /// </summary>
     private void OpenStartMenu()
     {
-        Taskbar.Hide();   // override auto-hide: keep the taskbar fully hidden while Start is open
+        // Keep the taskbar from popping up alongside Start — unless the user wants it always visible.
+        if (ViewModel?.Settings.TaskbarVisibility != TaskbarVisibility.Always)
+            Taskbar.Hide();
         StartMenu.Open(); // synthesize the Win key
         _startSeen = false;
         _startWatchTicks = 0;
@@ -1758,7 +1748,7 @@ public partial class DockWindow : Window
             return;
         }
 
-        _settingsWindow = new SettingsWindow(ViewModel, SetTheme, SetEdge, SetHideTaskbar, SetGlassEffect);
+        _settingsWindow = new SettingsWindow(ViewModel, SetTheme, SetEdge, SetTaskbarVisibility, SetGlassEffect, SetShowMenuBar);
 
         // Realize the handle now so we can hook its minimize and track it as a running window.
         IntPtr prefsHwnd = new WindowInteropHelper(_settingsWindow).EnsureHandle();
@@ -1957,9 +1947,22 @@ public partial class DockWindow : Window
         toggle.Click += (_, _) => ToggleVisibility();
         menu.Items.Add(toggle);
 
-        var hideTaskbarItem = new MenuItem { Header = Loc.T("Tray_HideTaskbar"), IsCheckable = true };
-        hideTaskbarItem.Click += (_, _) => SetHideTaskbar(hideTaskbarItem.IsChecked);
-        menu.Items.Add(hideTaskbarItem);
+        // Windows taskbar submenu: Always / Auto / Never (radio-style checks).
+        var taskbarItem = new MenuItem { Header = Loc.T("Tray_Taskbar") };
+        var tbAlways = new MenuItem { Header = Loc.T("Taskbar_Always"), IsCheckable = true };
+        var tbAuto = new MenuItem { Header = Loc.T("Taskbar_Auto"), IsCheckable = true };
+        var tbNever = new MenuItem { Header = Loc.T("Taskbar_Never"), IsCheckable = true };
+        tbAlways.Click += (_, _) => SetTaskbarVisibility(TaskbarVisibility.Always);
+        tbAuto.Click += (_, _) => SetTaskbarVisibility(TaskbarVisibility.Auto);
+        tbNever.Click += (_, _) => SetTaskbarVisibility(TaskbarVisibility.Never);
+        taskbarItem.Items.Add(tbAlways);
+        taskbarItem.Items.Add(tbAuto);
+        taskbarItem.Items.Add(tbNever);
+        menu.Items.Add(taskbarItem);
+
+        var menuBarItem = new MenuItem { Header = Loc.T("Toggle_ShowMenuBar"), IsCheckable = true };
+        menuBarItem.Click += (_, _) => SetShowMenuBar(menuBarItem.IsChecked);
+        menu.Items.Add(menuBarItem);
 
         // Theme submenu: Light / Dark / Auto (radio-style checks). "Auto" == DockTheme.System.
         var themeItem = new MenuItem { Header = Loc.T("Tray_Theme") };
@@ -1985,7 +1988,11 @@ public partial class DockWindow : Window
         // Reflect current settings whenever the menu opens.
         menu.Opened += (_, _) =>
         {
-            hideTaskbarItem.IsChecked = ViewModel?.Settings.HideTaskbar ?? false;
+            var tv = ViewModel?.Settings.TaskbarVisibility ?? TaskbarVisibility.Auto;
+            tbAlways.IsChecked = tv == TaskbarVisibility.Always;
+            tbAuto.IsChecked = tv == TaskbarVisibility.Auto;
+            tbNever.IsChecked = tv == TaskbarVisibility.Never;
+            menuBarItem.IsChecked = ViewModel?.Settings.ShowMenuBar ?? false;
             var theme = ViewModel?.Settings.Theme ?? DockTheme.System;
             themeLight.IsChecked = theme == DockTheme.Light;
             themeDark.IsChecked = theme == DockTheme.Dark;

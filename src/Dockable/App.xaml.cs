@@ -15,6 +15,7 @@ public partial class App : Application
     public DockViewModel DockViewModel { get; private set; } = null!;
 
     private DockWindow? _dockWindow;
+    private MenuBarWindow? _menuBarWindow;
     private Mutex? _singleInstanceMutex;
 
     public static new App Current => (App)Application.Current;
@@ -54,6 +55,10 @@ public partial class App : Application
 
             _dockWindow = new DockWindow { DataContext = DockViewModel };
             _dockWindow.Show();
+
+            // Opt-in macOS-style menu bar at the top of the primary monitor.
+            if (DockViewModel.Settings.ShowMenuBar)
+                SetMenuBarVisible(true);
         }
         catch (Exception ex)
         {
@@ -65,6 +70,25 @@ public partial class App : Application
                 string.Format(Loc.T("Error_StartupFailed"), ex.Message),
                 "Dockable", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown();
+        }
+    }
+
+    /// <summary>Shows or hides the top menu bar window, creating it on first show. Owned by the app so
+    /// its lifetime is independent of the dock window.</summary>
+    public void SetMenuBarVisible(bool show)
+    {
+        if (show)
+        {
+            if (_menuBarWindow is not null)
+                return;
+            _menuBarWindow = new MenuBarWindow { DataContext = new ViewModels.MenuBarViewModel(DockViewModel) };
+            _menuBarWindow.Closed += (_, _) => _menuBarWindow = null;
+            _menuBarWindow.Show();
+        }
+        else
+        {
+            _menuBarWindow?.Close(); // OnClosed releases the reserved top strip
+            _menuBarWindow = null;
         }
     }
 

@@ -17,7 +17,7 @@ internal sealed class ConfirmDialog : Window
 
     public bool DoNotAskAgain => _doNotAsk.IsChecked == true;
 
-    public ConfirmDialog(string message)
+    public ConfirmDialog(string message, bool showDoNotAskAgain = true)
     {
         Title = "Dockable";
         Icon = AppIcon.Large;
@@ -48,7 +48,8 @@ internal sealed class ConfirmDialog : Window
             Foreground = new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3C)),
             Margin = new Thickness(0, 0, 0, 18),
         };
-        stack.Children.Add(_doNotAsk);
+        if (showDoNotAskAgain)
+            stack.Children.Add(_doNotAsk);
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         var no = new Button { Content = Loc.T("Common_No"), MinWidth = 84, Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(10, 5, 10, 5), IsCancel = true };

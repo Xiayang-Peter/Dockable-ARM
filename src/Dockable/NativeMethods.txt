@@ -153,3 +153,18 @@ WINDOW_DISPLAY_AFFINITY
 // --- Liquid Glass: cap the capture rate at the monitor's refresh rate ---
 GetDeviceCaps
 GET_DEVICE_CAPS_INDEX
+
+// --- Menu bar: live focused-window title (track the title text changing in place) ---
+EVENT_OBJECT_NAMECHANGE
+
+// --- Menu bar: current keyboard layout indicator ---
+GetKeyboardLayout
+GetKeyboardLayoutList
+
+// --- Menu bar (Windows-logo menu): sleep + lock the session ---
+SetSuspendState
+LockWorkStation
+
+// --- Menu bar (Windows-logo menu): the signed-in user's friendly display name ("Jezz Lucena") ---
+GetUserNameEx
+EXTENDED_NAME_FORMAT
