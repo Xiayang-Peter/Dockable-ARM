@@ -132,6 +132,25 @@ Or run the built exe directly:
 The dock appears centered at the bottom of the primary display. (If a build fails only at the file-copy
 step, a previous `Dockable.exe` is still running — close it and rebuild.)
 
+### Portable single-file build
+
+Produce one self-contained `Dockable.exe` that runs on any Windows 11 x64 PC with nothing installed
+(the .NET 9 runtime and WPF are bundled inside, and the icons/sounds are embedded — no loose files):
+
+```powershell
+pwsh -File scripts\build-portable.ps1
+```
+
+Or directly:
+
+```powershell
+dotnet publish src/Dockable/Dockable.csproj -p:PublishProfile=Portable
+```
+
+The result is `src\Dockable\bin\Publish\Portable\win-x64\Dockable.exe` (~84 MB) — copy that single file
+anywhere and run it. (Single-file, self-contained, ReadyToRun, compressed; not trimmed because WPF
+isn't trim-safe.)
+
 ### Distribution (Steam)
 
 Dockable ships on Steam as a **self-contained x64 build** (the .NET 9 runtime and WPF are bundled, so

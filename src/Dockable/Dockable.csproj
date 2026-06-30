@@ -35,10 +35,11 @@
     <Resource Include="Assets\Settings_icon.png" />
   </ItemGroup>
 
-  <!-- UI sound effects: copied next to the exe so SoundPlayer can load them by path. -->
+  <!-- UI sound effects: embedded as WPF resources (loaded via a pack URI stream) so the app stays a
+       single portable file — no loose .wav files next to the exe. -->
   <ItemGroup>
     <None Remove="Assets\Sounds\*.wav" />
-    <Content Include="Assets\Sounds\*.wav" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="Assets\Sounds\*.wav" />
   </ItemGroup>
 
   <ItemGroup>
