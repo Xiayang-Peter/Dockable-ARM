@@ -36,4 +36,13 @@ public sealed partial class MenuBarViewModel : ObservableObject
 
     /// <summary>The formatted current date/time (trailing side of the bar).</summary>
     [ObservableProperty] private string _timeText = string.Empty;
+
+    /// <summary>Battery icon glyph (Segoe Fluent/MDL2 battery character reflecting level + charge state).</summary>
+    [ObservableProperty] private string _batteryGlyph = string.Empty;
+
+    /// <summary>Current battery level as a percentage string, e.g. "85%".</summary>
+    [ObservableProperty] private string _batteryLabel = string.Empty;
+
+    /// <summary>Whether this machine has a battery (false on desktops — the indicator is hidden then).</summary>
+    [ObservableProperty] private bool _hasBattery;
 }

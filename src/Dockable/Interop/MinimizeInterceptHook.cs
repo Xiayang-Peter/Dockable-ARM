@@ -23,9 +23,10 @@ namespace Dockable.Interop;
 /// cancels, just like a real button. (We must swallow the <i>down</i>, not just the up: a native
 /// caption button enters a modal loop on the down and waits for the up, so swallowing only the up would
 /// hang that loop and hold the mouse capture, leaving everything unresponsive.)</item>
-/// <item>The <b>keyboard shortcuts</b> Win+Down (minimize the active window) and Win+M (minimize all)
-/// — a low-level keyboard hook (WH_KEYBOARD_LL) swallows them and raises the matching event. Win+Down
-/// on a <i>maximized</i> window is left for the OS (it un-maximizes, it doesn't minimize).</item>
+/// <item>The <b>keyboard shortcuts</b> Win+Down (minimize the active window), Win+M (minimize all) and
+/// Win+D (show desktop — a minimize-all/restore-all toggle) — a low-level keyboard hook
+/// (WH_KEYBOARD_LL) swallows them and raises the matching event. Win+Down on a <i>maximized</i> window
+/// is left for the OS (it un-maximizes, it doesn't minimize).</item>
 /// </list>
 ///
 /// Callbacks are delivered on the thread that installed the hooks (the UI thread, which has a message
@@ -50,6 +51,7 @@ public sealed class MinimizeInterceptHook : IDisposable
     private const int VK_RWIN = 0x5C;
     private const int VK_DOWN = 0x28;
     private const int VK_M = 0x4D;
+    private const int VK_D = 0x44;
 
     private readonly HOOKPROC _mouseProc;    // held to keep the delegates alive for the hooks
     private readonly HOOKPROC _keyboardProc;
@@ -61,6 +63,7 @@ public sealed class MinimizeInterceptHook : IDisposable
     // True while a Win+key combo is held, so auto-repeat doesn't re-fire it.
     private bool _winDownArmed;
     private bool _winMArmed;
+    private bool _winDArmed;
 
     // The window whose minimize-button press we swallowed; the release decides whether to minimize it.
     private IntPtr _armedMinimize;
@@ -70,6 +73,10 @@ public sealed class MinimizeInterceptHook : IDisposable
 
     /// <summary>Fires when the user pressed Win+M (minimize every window).</summary>
     public event Action? MinimizeAllRequested;
+
+    /// <summary>Fires when the user pressed Win+D (show desktop) — a toggle: minimize every window if
+    /// any is open, otherwise restore the ones we minimized. The subscriber decides the direction.</summary>
+    public event Action? ShowDesktopRequested;
 
     public MinimizeInterceptHook()
     {
@@ -210,6 +217,16 @@ public sealed class MinimizeInterceptHook : IDisposable
                     _winMArmed = true;
                     MinimizeAllRequested?.Invoke();
                     return new LRESULT(1); // handled Win+M ourselves
+                }
+            }
+            else if (data.vkCode == VK_D)
+            {
+                if (up) _winDArmed = false;
+                else if (down && !_winDArmed && WinHeld())
+                {
+                    _winDArmed = true;
+                    ShowDesktopRequested?.Invoke();
+                    return new LRESULT(1); // handled Win+D (show desktop) ourselves
                 }
             }
         }

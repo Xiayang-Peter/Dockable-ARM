@@ -58,7 +58,7 @@ public partial class MenuBarWindow : Window
         Height = MenuBarHeight;
 
         _clockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _clockTimer.Tick += (_, _) => { UpdateClock(); UpdateKeyboard(); UpdateFullscreenState(); };
+        _clockTimer.Tick += (_, _) => { UpdateClock(); UpdateKeyboard(); UpdateBattery(); UpdateFullscreenState(); };
 
         Loaded += OnLoaded;
         DataContextChanged += (_, _) => ApplyTheme();
@@ -101,6 +101,7 @@ public partial class MenuBarWindow : Window
         UpdateAppName();
         UpdateKeyboard();
         UpdateClock();
+        UpdateBattery();
         UpdateFullscreenState(); // hide immediately if launched while a full-screen app is active
         _clockTimer.Start();
         Loc.LanguageChanged += OnLanguageChanged;
@@ -291,6 +292,42 @@ public partial class MenuBarWindow : Window
         var now = DateTime.Now;
         // e.g. "Sat 28 Jun  3:42 PM" (en) — weekday + day/month, then the culture's short time.
         ViewModel.TimeText = $"{now.ToString("ddd d MMM", culture)}  {now.ToString("t", culture)}";
+    }
+
+    // Segoe Fluent/MDL2 battery glyphs run in 11 steps (empty→full): Battery0 (0xE850) when on battery,
+    // BatteryCharging0 (0xE85B) when plugged in — each +1 is one 10% step up.
+    private const int BatteryGlyphBase = 0xE850;
+    private const int BatteryChargingGlyphBase = 0xE85B;
+
+    private void UpdateBattery()
+    {
+        if (ViewModel is null)
+            return;
+        var status = Power.Read();
+        ViewModel.HasBattery = status.Present;
+        if (!status.Present)
+            return; // desktop / no battery — the indicator is collapsed
+
+        int step = Math.Clamp((int)Math.Round(status.Percent / 10.0), 0, 10);
+        int glyphBase = (status.Charging || status.OnAc) ? BatteryChargingGlyphBase : BatteryGlyphBase;
+        ViewModel.BatteryGlyph = ((char)(glyphBase + step)).ToString();
+        ViewModel.BatteryLabel = $"{status.Percent}%";
+    }
+
+    // Opens the Windows "Power & battery" settings page.
+    private void Battery_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:batterysaver")
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch
+        {
+            // Best-effort; the settings deep-link may be unavailable on some SKUs.
+        }
     }
 
     private static CultureInfo CultureFor(string code)

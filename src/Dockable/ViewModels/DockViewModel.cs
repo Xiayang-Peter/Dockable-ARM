@@ -145,6 +145,10 @@ public sealed partial class DockViewModel : ObservableObject
     /// horizontal dock, window Y for a vertical one).</summary>
     public bool UpdateMagnification(double mouseMain, bool hovering) => _layout.Update(mouseMain, hovering);
 
+    /// <summary>The resting (un-magnified, fully grown-in) center of an item in window DIP — used to aim
+    /// the minimize warp at a tile's final slot while it's still growing in.</summary>
+    public (double X, double Y) RestingCenterOf(DockItemViewModel item) => _layout.RestingCenterOf(item);
+
     // --- Live drag-reorder (driven by DockWindow's mouse capture) ---
     public void BeginItemDrag(DockItemViewModel item) => _layout.BeginDrag(item);
     public void EndItemDrag() => _layout.EndDrag();
@@ -615,22 +619,47 @@ public sealed partial class DockViewModel : ObservableObject
 
     // --- Minimized-window tiles ---------------------------------------------------------
 
-    public DockItemViewModel AddMinimizedWindow(IntPtr hwnd, ImageSource? thumbnail, string title)
+    /// <summary>Adds a minimized-window tile. When <paramref name="animate"/> is true its slot grows in
+    /// from zero width so the dock's total width eases wider instead of snapping (matched by the shrink-out
+    /// in <see cref="RemoveMinimizedWindow"/>).</summary>
+    public DockItemViewModel AddMinimizedWindow(IntPtr hwnd, ImageSource? thumbnail, string title, bool animate = true)
     {
+        // Re-minimized while its tile was still shrinking out? Revive that tile (grow it back) rather
+        // than adding a duplicate.
+        var reviving = _minimizedVms.FirstOrDefault(i => i.Hwnd == hwnd && i.Departing);
+        if (reviving is not null)
+        {
+            reviving.Departing = false;
+            _departing.Remove(reviving);
+            if (thumbnail is not null)
+                reviving.Icon = thumbnail;
+            ComposeItems();
+            AnimationRequested?.Invoke();
+            return reviving;
+        }
+
         var vm = new DockItemViewModel(DockItem.CreateMinimizedWindow(title)) { Hwnd = hwnd, Icon = thumbnail };
+        vm.AppearScale = animate ? 0.0 : 1.0; // grow the slot in (skipped for startup adoption)
         _minimizedVms.Add(vm);
-        ComposeItems();
+        ComposeItems(); // requests the render loop when the tile is mid-appear (AppearScale < 1)
         return vm;
     }
 
     public void RemoveMinimizedWindow(DockItemViewModel item)
     {
-        if (_minimizedVms.Remove(item))
-            ComposeItems();
+        // Shrink the tile's slot out (deferred removal) so the dock width eases closed instead of
+        // snapping; FinalizeDeparted drops it once the shrink completes.
+        if (!_minimizedVms.Contains(item) || item.Departing)
+            return;
+        item.Departing = true;
+        _departing.Add(item);
+        ComposeItems();          // kept in _minimizedVms → stays composed, now easing to zero width
+        AnimationRequested?.Invoke();
     }
 
+    // A tile mid shrink-out is treated as gone (so its window can be re-minimized / re-adopted cleanly).
     public DockItemViewModel? FindMinimizedWindow(IntPtr hwnd)
-        => _minimizedVms.FirstOrDefault(i => i.Hwnd == hwnd);
+        => _minimizedVms.FirstOrDefault(i => i.Hwnd == hwnd && !i.Departing);
 
     /// <summary>The current minimized-window tiles (snapshot), e.g. to restore them all on exit.</summary>
     public IReadOnlyList<DockItemViewModel> MinimizedWindows => _minimizedVms.ToList();
@@ -694,7 +723,9 @@ public sealed partial class DockViewModel : ObservableObject
         {
             _departing.Remove(d);
             d.Departing = false;
-            _appByKey.Remove(d.AppKey);
+            if (_minimizedVms.Remove(d)) // a shrunk-out minimized-window tile
+                continue;
+            _appByKey.Remove(d.AppKey);  // otherwise a departed taskbar app
             _appVms.Remove(d);
         }
         ComposeItems();

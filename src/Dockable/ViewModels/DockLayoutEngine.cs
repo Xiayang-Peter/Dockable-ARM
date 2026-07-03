@@ -346,6 +346,43 @@ public sealed class DockLayoutEngine
         }
     }
 
+    /// <summary>
+    /// The resting (un-magnified, fully grown-in) center of <paramref name="target"/> in window DIP for
+    /// the current edge — the spot it settles at once magnification is off and its grow-in has finished.
+    /// Used to aim the minimize warp at a tile's final slot while it's still animating in (its live
+    /// position is mid-transition). Returns (0,0) if the item isn't in the row.
+    /// </summary>
+    public (double X, double Y) RestingCenterOf(DockItemViewModel target)
+    {
+        // Resting cumulative layout (scales = 1, fully appeared), centered — matches Recompute/Update.
+        double along = _restingBlockMain;
+        double centerMain = double.NaN;
+        foreach (var item in _vm.Items)
+        {
+            double bc = BaseCell(item);
+            if (ReferenceEquals(item, target))
+            {
+                centerMain = along + bc / 2; // the icon is centered in its cell
+                break;
+            }
+            along += bc + Gap;
+        }
+        if (double.IsNaN(centerMain))
+            return (0, 0);
+
+        // Cross-axis (depth) center of a normal icon tile at rest.
+        double renderCross = _baseSize * IconFill;
+        double crossCenter = EdgeMargin + (_baseSize - renderCross) / 2 + renderCross / 2;
+
+        return Edge switch
+        {
+            DockEdge.Top => (centerMain, crossCenter),
+            DockEdge.Left => (crossCenter, centerMain),
+            DockEdge.Right => (_crossWindow - crossCenter, centerMain),
+            _ => (centerMain, _crossWindow - crossCenter), // Bottom
+        };
+    }
+
     /// <summary>Number of pinned tiles whose resting center is before the cursor (along the main axis).</summary>
     private int PinnedBeforeCursor(List<DockItemViewModel> placed, double mouseMain)
     {

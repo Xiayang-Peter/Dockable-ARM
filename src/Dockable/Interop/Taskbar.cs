@@ -168,6 +168,25 @@ public static class Taskbar
         }, default);
     }
 
+    /// <summary>The process id that owns the primary taskbar (Explorer), or 0 if not found — used to
+    /// scope the "keep hidden" WinEvent hook to just Explorer's windows.</summary>
+    public static unsafe uint TrayProcessId()
+    {
+        HWND tray = PInvoke.FindWindow(PrimaryClass, null!);
+        if (tray.IsNull)
+            return 0;
+        uint pid = 0;
+        PInvoke.GetWindowThreadProcessId(tray, &pid);
+        return pid;
+    }
+
+    /// <summary>True if <paramref name="hwnd"/> is a primary or secondary taskbar window.</summary>
+    internal static bool IsTrayWindow(HWND hwnd)
+    {
+        string cls = GetClassName(hwnd);
+        return cls == PrimaryClass || cls == SecondaryClass;
+    }
+
     private static unsafe string GetClassName(HWND hwnd)
     {
         Span<char> buffer = stackalloc char[256];

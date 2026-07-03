@@ -173,6 +173,9 @@ GetAsyncKeyState
 // --- Menu bar: live focused-window title (track the title text changing in place) ---
 EVENT_OBJECT_NAMECHANGE
 
+// --- Keep the taskbar hidden ("Never"): re-hide it when Explorer re-shows the tray window ---
+EVENT_OBJECT_SHOW
+
 // --- Menu bar: current keyboard layout indicator ---
 GetKeyboardLayout
 GetKeyboardLayoutList
@@ -199,3 +202,7 @@ LockWorkStation
 // --- Menu bar (Windows-logo menu): the signed-in user's friendly display name ("Jezz Lucena") ---
 GetUserNameEx
 EXTENDED_NAME_FORMAT
+
+// --- Menu bar: battery level + charge state indicator ---
+GetSystemPowerStatus
+SYSTEM_POWER_STATUS

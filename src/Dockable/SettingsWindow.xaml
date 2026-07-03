@@ -380,7 +380,8 @@
 
             <!-- ============ General ============ -->
             <ScrollViewer x:Name="PageGeneral" VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                          HorizontalScrollBarVisibility="Disabled" Focusable="False"
+                          PanningMode="VerticalOnly">
                 <StackPanel Margin="20">
                     <!-- System section (language + login) -->
                     <TextBlock Text="{loc:Loc Section_System}" Style="{StaticResource PageHeader}" />
@@ -558,7 +559,8 @@
 
             <!-- ============ Dock & Menu Bar ============ -->
             <ScrollViewer x:Name="PageDockMenuBar" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                          HorizontalScrollBarVisibility="Disabled" Focusable="False"
+                          PanningMode="VerticalOnly">
                 <StackPanel Margin="20">
                     <TextBlock Text="{loc:Loc Section_Dock}" Style="{StaticResource PageHeader}" />
 
@@ -710,7 +712,8 @@
 
             <!-- ============ Liquid Glass ============ -->
             <ScrollViewer x:Name="PageLiquidGlass" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                          HorizontalScrollBarVisibility="Disabled" Focusable="False"
+                          PanningMode="VerticalOnly">
                 <StackPanel Margin="20">
                     <TextBlock Text="{loc:Loc Section_LiquidGlass}" Style="{StaticResource PageHeader}" />
 
@@ -889,7 +892,8 @@
 
             <!-- ============ About ============ -->
             <ScrollViewer x:Name="PageAbout" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                          HorizontalScrollBarVisibility="Disabled" Focusable="False"
+                          PanningMode="VerticalOnly">
                 <StackPanel Margin="20">
                     <!-- App icon + name + tagline + version -->
                     <Image x:Name="AboutAppImage" Width="88" Height="88" HorizontalAlignment="Center" Margin="0,4,0,0" />
