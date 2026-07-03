@@ -25,9 +25,21 @@ public sealed class DockLayoutEngine
     // it doesn't move the bar or icons on screen (their position is independent of the window height).
     private const double TopHeadroom = 52;
 
+    // Per-frame easing factors, tuned for 60 FPS. They're re-scaled to the real frame delta (see
+    // TimeSmooth) so an animation lasts the same wall-clock time at any frame rate — on a slow machine
+    // that means fewer, larger steps (frame-skipping) rather than the same small steps stretched over
+    // more real time (which made appear/disappear drag on and magnification trail the cursor).
     private const double Smoothing = 0.35;       // scale easing
     private const double AppearSmoothing = 0.18;  // add/remove (grow-in / shrink-out) easing
     private const double DragPosSmoothing = 0.28; // position easing while dragging / settling
+    private const double ReferenceFrameMs = 1000.0 / 60.0; // the frame time the factors above assume
+
+    /// <summary>Re-scales a per-60FPS-frame smoothing factor <paramref name="k"/> to the actual elapsed
+    /// <paramref name="dtMs"/>, so exponential easing (<c>v += (target-v)*k</c>) converges over a fixed
+    /// wall-clock time regardless of frame rate. At 60 FPS it's a no-op; at 30 FPS it takes a
+    /// correspondingly larger step. Never overshoots (result stays in [0,1)).</summary>
+    private static double TimeSmooth(double k, double dtMs)
+        => 1.0 - Math.Pow(1.0 - k, dtMs / ReferenceFrameMs);
     private const double DragScale = 1.12;        // the lifted tile is slightly enlarged
     private const double DragLift = 14;           // and raised (deeper) than the row
 
@@ -155,13 +167,18 @@ public sealed class DockLayoutEngine
         if (_dragItem is null && !_settling)
             foreach (var item in _vm.Items)
                 item.CurrentScale = 1.0;
-        Update(double.NegativeInfinity, hovering: false);
+        Update(double.NegativeInfinity, hovering: false, ReferenceFrameMs); // one nominal step
     }
 
     /// <summary>Advances the layout one frame. <paramref name="mouseMain"/> is the cursor's main-axis
-    /// coordinate (window X for horizontal docks, window Y for vertical). Returns true while animating.</summary>
-    public bool Update(double mouseMain, bool hovering)
+    /// coordinate (window X for horizontal docks, window Y for vertical). <paramref name="dtMs"/> is the
+    /// real time since the previous processed frame, so the eases stay frame-rate independent. Returns
+    /// true while animating.</summary>
+    public bool Update(double mouseMain, bool hovering, double dtMs)
     {
+        double scaleSmooth = TimeSmooth(Smoothing, dtMs);
+        double appearSmooth = TimeSmooth(AppearSmoothing, dtMs);
+        double dragSmooth = TimeSmooth(DragPosSmoothing, dtMs);
         var items = _vm.Items;
         int n = items.Count;
         if (n == 0)
@@ -187,7 +204,7 @@ public sealed class DockLayoutEngine
                 : 1.0;
 
             double cur = items[i].CurrentScale;
-            cur += (target - cur) * Smoothing;
+            cur += (target - cur) * scaleSmooth;
             if (Math.Abs(target - cur) < 0.001)
                 cur = target;
             else
@@ -198,7 +215,7 @@ public sealed class DockLayoutEngine
             // smoothly. A growing/shrinking cell pushes neighbours apart / lets them close in.
             double targetAppear = items[i].Departing ? 0.0 : 1.0;
             double a = items[i].AppearScale;
-            a += (targetAppear - a) * AppearSmoothing;
+            a += (targetAppear - a) * appearSmooth;
             if (Math.Abs(targetAppear - a) < 0.01)
                 a = targetAppear;
             else
@@ -249,7 +266,7 @@ public sealed class DockLayoutEngine
             {
                 double cur = IsVertical ? item.Y : item.X;
                 double delta = targetMain - cur;
-                if (Math.Abs(delta) > 0.5) { stillSettling = true; mainPos = cur + delta * DragPosSmoothing; }
+                if (Math.Abs(delta) > 0.5) { stillSettling = true; mainPos = cur + delta * dragSmooth; }
                 else mainPos = targetMain;
             }
             else

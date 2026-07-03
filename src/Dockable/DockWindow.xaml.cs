@@ -2035,9 +2035,20 @@ public partial class DockWindow : Window
         // just returns, and the next eligible tick runs the full body below (including the settle/detach
         // test), so idle self-detach still happens within one frame interval.
         var renderNow = ((RenderingEventArgs)e).RenderingTime;
-        if (_lastRenderTime != TimeSpan.Zero
-            && (renderNow - _lastRenderTime).TotalMilliseconds < PerformanceProfile.MinFrameIntervalMs)
-            return;
+        double dtMs;
+        if (_lastRenderTime == TimeSpan.Zero)
+        {
+            dtMs = 1000.0 / 60.0; // first frame after (re)hook: one nominal step, no catch-up jump
+        }
+        else
+        {
+            double gap = (renderNow - _lastRenderTime).TotalMilliseconds;
+            if (gap < PerformanceProfile.MinFrameIntervalMs)
+                return;
+            // Real time since the last PROCESSED frame drives the eases (so they're frame-rate
+            // independent). Clamp so a stall (GC pause, load spike) takes one big step, not a wild jump.
+            dtMs = Math.Min(gap, 100.0);
+        }
         _lastRenderTime = renderNow;
 
         // Track hover from the real cursor position rather than trusting WPF's MouseLeave: on this
@@ -2056,7 +2067,7 @@ public partial class DockWindow : Window
 
         // Suppress magnification while resizing via a separator (icons stay at the new resting size).
         double mouseMain = IsVerticalDock ? _mouseY : _mouseX;
-        bool animating = ViewModel?.UpdateMagnification(mouseMain, _hovering && !_separatorResize) ?? false;
+        bool animating = ViewModel?.UpdateMagnification(mouseMain, _hovering && !_separatorResize, dtMs) ?? false;
         SyncAcrylic();      // track the acrylic backdrop to the (magnifying) bar each frame
         UpdateGlassShape();    // keep the shader's rounded-rect matched to the bar (cheap; DP-guarded)
         UpdateGlassSpecular(); // sweep the rim glint toward the cursor and ramp it with hover
@@ -2093,6 +2104,7 @@ public partial class DockWindow : Window
             return;
         CompositionTarget.Rendering -= OnRendering;
         _renderingHooked = false;
+        _lastRenderTime = TimeSpan.Zero; // next hook starts a fresh frame-delta clock (nominal first step)
     }
 
     // --- Item interaction ---

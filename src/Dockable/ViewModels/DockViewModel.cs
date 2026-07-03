@@ -143,7 +143,8 @@ public sealed partial class DockViewModel : ObservableObject
 
     /// <summary><paramref name="mouseMain"/> is the cursor's main-axis coordinate (window X for a
     /// horizontal dock, window Y for a vertical one).</summary>
-    public bool UpdateMagnification(double mouseMain, bool hovering) => _layout.Update(mouseMain, hovering);
+    public bool UpdateMagnification(double mouseMain, bool hovering, double dtMs)
+        => _layout.Update(mouseMain, hovering, dtMs);
 
     /// <summary>The resting (un-magnified, fully grown-in) center of an item in window DIP — used to aim
     /// the minimize warp at a tile's final slot while it's still growing in.</summary>
