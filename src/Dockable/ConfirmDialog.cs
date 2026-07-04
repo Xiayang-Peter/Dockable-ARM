@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
@@ -19,27 +20,10 @@ internal sealed class ConfirmDialog : Window
 
     public ConfirmDialog(string message, bool showDoNotAskAgain = true)
     {
-        Title = "Dockable";
-        Icon = AppIcon.Large;
-        WindowStyle = WindowStyle.None;
-        AllowsTransparency = true;
-        Background = Brushes.Transparent;
-        ResizeMode = ResizeMode.NoResize;
-        SizeToContent = SizeToContent.Height;
-        Width = 380;
-        WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        ShowInTaskbar = false;
-        Topmost = true;
+        DialogChrome.ApplyShell(this);
 
         var stack = new StackPanel();
-        stack.Children.Add(new TextBlock
-        {
-            Text = message,
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = 14,
-            Foreground = new SolidColorBrush(Color.FromRgb(0x1D, 0x1D, 0x1F)),
-            Margin = new Thickness(0, 0, 0, 16),
-        });
+        stack.Children.Add(DialogChrome.Message(message, bottomMargin: 16));
 
         _doNotAsk = new CheckBox
         {
@@ -51,22 +35,12 @@ internal sealed class ConfirmDialog : Window
         if (showDoNotAskAgain)
             stack.Children.Add(_doNotAsk);
 
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var no = new Button { Content = Loc.T("Common_No"), MinWidth = 84, Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(10, 5, 10, 5), IsCancel = true };
-        no.Click += (_, _) => DialogResult = false;
-        var yes = new Button { Content = Loc.T("Common_Yes"), MinWidth = 84, Padding = new Thickness(10, 5, 10, 5), IsDefault = true };
-        yes.Click += (_, _) => DialogResult = true;
-        buttons.Children.Add(no);
-        buttons.Children.Add(yes);
-        stack.Children.Add(buttons);
+        var (no, yes) = DialogChrome.AddButtonRow(stack, this, Loc.T("Common_No"), Loc.T("Common_Yes"));
+        // Screen readers land on a button first (borderless window, no title bar to read) — carry
+        // the question as help text so it's announced with the focus.
+        AutomationProperties.SetHelpText(yes, message);
+        AutomationProperties.SetHelpText(no, message);
 
-        Content = new Border
-        {
-            Background = new SolidColorBrush(Color.FromRgb(0xF5, 0xF5, 0xF7)),
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(22),
-            Effect = new DropShadowEffect { BlurRadius = 24, ShadowDepth = 4, Opacity = 0.35, Color = Colors.Black },
-            Child = stack,
-        };
+        Content = DialogChrome.Surface(stack);
     }
 }

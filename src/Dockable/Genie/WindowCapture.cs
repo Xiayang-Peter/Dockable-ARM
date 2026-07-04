@@ -28,11 +28,20 @@ public static class WindowCapture
     /// With <c>WDA_EXCLUDEFROMCAPTURE</c> set on the dock, the dock is omitted from the grab, so this
     /// yields the true backdrop behind it (for the Liquid Glass refraction). Null on failure.
     /// </summary>
-    public static unsafe BitmapSource? CaptureScreenRect(int x, int y, int w, int h)
+    public static BitmapSource? CaptureScreenRect(int x, int y, int w, int h)
     {
         if (w <= 0 || h <= 0 || w > 20000 || h > 20000)
             return null;
+        return BlitScreenRect(x, y, w, h, BuildBackdropBitmap);
+    }
 
+    /// <summary>Runs the shared screen-DC → memory-DC → top-down 32bpp DIB → BitBlt(CAPTUREBLT)
+    /// dance for a screen rectangle, handing the raw BGRX bits to <paramref name="build"/> while the
+    /// DIB is still selected/alive (it may mutate them in place). All GDI objects are released in
+    /// the same finally order as before the extraction. Null when any GDI step or the blit fails.</summary>
+    private static unsafe BitmapSource? BlitScreenRect(int x, int y, int w, int h,
+        Func<IntPtr, int, int, BitmapSource> build)
+    {
         HDC screenDc = PInvoke.GetDC((HWND)IntPtr.Zero);
         HDC memDc = PInvoke.CreateCompatibleDC(screenDc);
         try
@@ -40,7 +49,7 @@ public static class WindowCapture
             var bmi = new BITMAPINFO();
             bmi.bmiHeader.biSize = (uint)sizeof(BITMAPINFOHEADER);
             bmi.bmiHeader.biWidth = w;
-            bmi.bmiHeader.biHeight = -h; // top-down
+            bmi.bmiHeader.biHeight = -h; // negative => top-down rows
             bmi.bmiHeader.biPlanes = 1;
             bmi.bmiHeader.biBitCount = 32;
             bmi.bmiHeader.biCompression = 0; // BI_RGB
@@ -55,12 +64,7 @@ public static class WindowCapture
             {
                 if (!PInvoke.BitBlt(memDc, 0, 0, w, h, screenDc, x, y, CaptureRop))
                     return null;
-
-                int stride = w * 4;
-                var bitmap = new WriteableBitmap(w, h, 96, 96, PixelFormats.Bgr32, null);
-                bitmap.WritePixels(new Int32Rect(0, 0, w, h), (IntPtr)bits, stride * h, stride);
-                bitmap.Freeze();
-                return bitmap;
+                return build((IntPtr)bits, w, h);
             }
             finally
             {
@@ -73,6 +77,16 @@ public static class WindowCapture
             PInvoke.DeleteDC(memDc);
             PInvoke.ReleaseDC((HWND)IntPtr.Zero, screenDc);
         }
+    }
+
+    /// <summary>The Liquid Glass backdrop bitmap: the raw BGRX bits as an opaque Bgr32 image.</summary>
+    private static BitmapSource BuildBackdropBitmap(IntPtr bits, int w, int h)
+    {
+        int stride = w * 4;
+        var bitmap = new WriteableBitmap(w, h, 96, 96, PixelFormats.Bgr32, null);
+        bitmap.WritePixels(new Int32Rect(0, 0, w, h), bits, stride * h, stride);
+        bitmap.Freeze();
+        return bitmap;
     }
 
     public static unsafe Result? Capture(IntPtr hwnd)
@@ -99,46 +113,15 @@ public static class WindowCapture
 
         int radiusPx = CornerRadiusPx(window, w, h);
 
-        HDC screenDc = PInvoke.GetDC((HWND)IntPtr.Zero);
-        HDC memDc = PInvoke.CreateCompatibleDC(screenDc);
-        try
+        // Copy the composited screen pixels at the window's location, then carve the corners in place.
+        var bitmap = BlitScreenRect(rect.left, rect.top, w, h, (bits, bw, bh) =>
         {
-            var bmi = new BITMAPINFO();
-            bmi.bmiHeader.biSize = (uint)sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = w;
-            bmi.bmiHeader.biHeight = -h; // negative => top-down rows
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = 0; // BI_RGB
-
-            void* bits;
-            HBITMAP dib = PInvoke.CreateDIBSection(memDc, &bmi, DIB_USAGE.DIB_RGB_COLORS, &bits, default, 0);
-            if (dib.IsNull || bits is null)
-                return null;
-
-            HGDIOBJ previous = PInvoke.SelectObject(memDc, (HGDIOBJ)(void*)dib);
-            try
-            {
-                // Copy the composited screen pixels at the window's location.
-                if (!PInvoke.BitBlt(memDc, 0, 0, w, h, screenDc, rect.left, rect.top, CaptureRop))
-                    return null;
-
-                var bitmap = BuildWindowBitmap(bits, w, h, radiusPx);
-                if (MinimizeProfiler.Enabled)
-                    MinimizeProfiler.Mark("capture", Stopwatch.GetElapsedTime(startTs).TotalMilliseconds, w, h);
-                return new Result(bitmap, new Int32Rect(rect.left, rect.top, w, h));
-            }
-            finally
-            {
-                PInvoke.SelectObject(memDc, previous);
-                PInvoke.DeleteObject((HGDIOBJ)(void*)dib);
-            }
-        }
-        finally
-        {
-            PInvoke.DeleteDC(memDc);
-            PInvoke.ReleaseDC((HWND)IntPtr.Zero, screenDc);
-        }
+            var built = BuildWindowBitmap(bits, bw, bh, radiusPx);
+            if (MinimizeProfiler.Enabled)
+                MinimizeProfiler.Mark("capture", Stopwatch.GetElapsedTime(startTs).TotalMilliseconds, bw, bh);
+            return built;
+        });
+        return bitmap is null ? null : new Result(bitmap, new Int32Rect(rect.left, rect.top, w, h));
     }
 
     /// <summary>The window's rounded-corner radius in physical pixels (Win11 default ≈ 8 DIP, scaled
@@ -158,7 +141,7 @@ public static class WindowCapture
     /// leaves the 4th byte unspecified, so alpha is set explicitly: 255 everywhere, tapering to 0 in the
     /// corner arcs.
     /// </summary>
-    private static unsafe BitmapSource BuildWindowBitmap(void* bits, int w, int h, int radius)
+    private static unsafe BitmapSource BuildWindowBitmap(IntPtr bits, int w, int h, int radius)
     {
         int stride = w * 4;
 
@@ -167,7 +150,7 @@ public static class WindowCapture
         // copying again. That halves the per-capture memory traffic (~10 MB saved for a 4K window), which
         // is the bulk of the build cost. BitBlt leaves the 4th (alpha) byte unspecified; OR the whole body
         // opaque (JIT-vectorizable over 32-bit pixels; alpha is the high byte in little-endian BGRA).
-        var pixels = new Span<uint>(bits, w * h);
+        var pixels = new Span<uint>((void*)bits, w * h);
         for (int i = 0; i < pixels.Length; i++)
             pixels[i] |= 0xFF000000u;
 

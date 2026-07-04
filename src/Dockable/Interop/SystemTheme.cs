@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using Dockable.Models;
 using Microsoft.Win32;
 
 namespace Dockable.Interop;
@@ -19,4 +21,16 @@ public static class SystemTheme
             return true;
         }
     }
+
+    /// <summary>Resolves a <see cref="DockTheme"/> to effective dark (System follows Windows).</summary>
+    public static bool IsDarkEffective(DockTheme theme) => theme switch
+    {
+        DockTheme.Dark => true,
+        DockTheme.Light => false,
+        _ => !IsLight(),
+    };
+
+    /// <summary>True when a WM_SETTINGCHANGE lParam announces the OS light/dark theme changed.</summary>
+    public static bool IsImmersiveColorChange(IntPtr lParam)
+        => Marshal.PtrToStringAuto(lParam) == "ImmersiveColorSet";
 }

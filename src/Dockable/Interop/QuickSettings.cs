@@ -1,5 +1,3 @@
-using System.Runtime.InteropServices;
-using Windows.Win32;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
 
 namespace Dockable.Interop;
@@ -11,26 +9,5 @@ namespace Dockable.Interop;
 /// </summary>
 public static class QuickSettings
 {
-    public static void Open()
-    {
-        Span<INPUT> inputs =
-        [
-            KeyEvent(VIRTUAL_KEY.VK_LWIN, keyUp: false),
-            KeyEvent(VIRTUAL_KEY.VK_A, keyUp: false),
-            KeyEvent(VIRTUAL_KEY.VK_A, keyUp: true),
-            KeyEvent(VIRTUAL_KEY.VK_LWIN, keyUp: true),
-        ];
-        PInvoke.SendInput(inputs, Marshal.SizeOf<INPUT>());
-    }
-
-    private static INPUT KeyEvent(VIRTUAL_KEY key, bool keyUp)
-    {
-        var input = new INPUT { type = INPUT_TYPE.INPUT_KEYBOARD };
-        input.Anonymous.ki = new KEYBDINPUT
-        {
-            wVk = key,
-            dwFlags = keyUp ? KEYBD_EVENT_FLAGS.KEYEVENTF_KEYUP : 0,
-        };
-        return input;
-    }
+    public static void Open() => SynthesizedInput.SendChord(VIRTUAL_KEY.VK_LWIN, VIRTUAL_KEY.VK_A);
 }

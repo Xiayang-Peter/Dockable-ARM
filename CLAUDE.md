@@ -159,14 +159,28 @@ src/Dockable/
                          bar). Owned by App (created/closed per Settings.ShowMenuBar). See feature area below.
   ConfirmDialog.cs       Code-built Yes/No prompt with optional "Do not ask again".
   InputDialog.cs         Code-built single-line text prompt (OK/Cancel) — e.g. Rename.
-  AppIcon.cs             The app's own icon loaded once (Large 256px / Tray 32px) for windows + tray.
+  AppIcon.cs             The app's own icon loaded once: Large (256px png, windows/Alt-Tab) and
+                         Tray (the multi-size Dockable.ico — its 16/32px frames stay crisp in the tray).
   Sounds.cs              Short UI WAV effects (empty-trash / drag-to-trash / remove) via SoundPlayer,
                          loaded from embedded `pack://` resources (so the single-file build has no loose .wav).
+  UiBrushes.cs           Shared frozen-brush-from-hex helper + the recurring palette hex constants
+                         (AccentHex/InkHex/SurfaceHex) — use it instead of re-rolling a private Brush(hex).
+  MenuBuilder.cs         AddItem/AddCheckable for the code-built menus' PLAIN items (header + click).
+                         Items with dynamic headers (Quit/Force Quit), Icons, or sender-aware handlers
+                         stay hand-built at their call sites — don't force them through the helper.
+  DialogChrome.cs        Shared scaffolding of the code-built dialogs (frameless shell, message block,
+                         rounded surface card, Cancel/OK button row); per-dialog content stays local.
   app.manifest           Per-monitor-v2 DPI awareness; asInvoker.
   NativeMethods.txt      CsWin32 API list.
 
   Themes/
     ModernMenu.xaml      Windows 11-style context-menu styles (implicit, app-wide; merged in App.xaml).
+  Accessibility/
+    DockItemElement.cs   The dock item template's root (a Grid subclass): its UIA peer names each item
+                         (DisplayName + running/minimized state) and exposes Invoke → DockWindow.ActivateItem.
+    A11y.cs              InvokableRow/InvokableCell — StackPanel/Border subclasses with a UIA Button peer
+                         whose Invoke replays MouseLeftButtonUp; used by the code-built click targets
+                         (fan/grid rows, settings search rows, menu-bar pills).
   Localization/
     LocData.cs           Per-language string tables (en, pt-BR, es, uk, zh-Hans) + the picker list.
     Loc.cs               Runtime service: indexer + T(key); SetLanguage (live) raises Item[]/event;
@@ -198,11 +212,19 @@ src/Dockable/
     StackIcon.cs         Composites a folder's top items into the Stack tile bitmap.
     SvgIcon.cs           Renders .svg/.svgz to icons via SharpVectors (hooked into LoadIconAsync).
   Interop/
-    StartMenu.cs         Open Start via synthesized Win keypress (SendInput).
+    SynthesizedInput.cs  Shared SendInput chord helper (press in order, release in reverse) behind the
+                         four OS-gesture openers below.
+    WinEventHook.cs      Owns one SetWinEventHook registration: delegate lifetime, double-start guard,
+                         stop/RESTART support, optional pid scoping, and the universal
+                         idObject==0 && idChild==0 "window itself" filter. All the WinEvent watchers
+                         (MinimizeHook, ForegroundWatcher, TitleWatcher ×2, TaskbarHideWatcher,
+                         Genie/WindowThumbnailCache) compose instances of it.
+    StartMenu.cs         Open Start via a synthesized Win keypress (SynthesizedInput).
     QuickSettings.cs     Open the OS Quick Settings flyout (network/sound) via synthesized Win+A.
     Notifications.cs     Open the OS Notification Center / calendar flyout via synthesized Win+N.
     TrayOverflow.cs      Open the system-tray overflow ("show hidden icons") flyout via synthesized
                          Win+B (focus the tray, reveal the taskbar) then Enter (activate the chevron).
+                         Call off the UI thread (it sleeps 200 ms between the chords).
     SystemActions.cs     Menu-bar Windows-logo menu power/session actions: Sleep (SetSuspendState),
                          Lock (LockWorkStation), Restart/ShutDown/LogOut (shell out to shutdown.exe).
     TitleWatcher.cs      SetWinEventHook(EVENT_SYSTEM_FOREGROUND + EVENT_OBJECT_NAMECHANGE) → TitleChanged
@@ -227,8 +249,13 @@ src/Dockable/
                          C#, kept C# 5 / PS 5.1-safe) and exits. Skips the restore if a new dock
                          instance is already running (quick restart race).
     TaskbarApps.cs       Read taskbar pins (registry order + .lnk targets/AUMIDs) + enumerate
-                         taskbar-eligible app windows (exe path + window AUMID).
-    PinMatcher.cs        Multi-strategy "does this window belong to this pin?".
+                         taskbar-eligible app windows. Per-window exe path + AUMID are CACHED by HWND
+                         (IdentityCache: pid-checked against handle recycling, empty AUMIDs retried ≤3×
+                         for late-setting apps, dead HWNDs evicted each enumeration) — resolving them
+                         fresh was the 1 s refresh's main cost. Titles stay live/uncached; the public
+                         GetWindowExePath/GetWindowAumid keep uncached semantics for event-driven callers.
+    PinMatcher.cs        Multi-strategy "does this window belong to this pin?". Built matchers are
+                         cached per pin path (their inputs are already permanently memoized).
     WindowFilter.cs      Shared "is this a normal app window" test (internal; takes HWND).
     MinimizeHook.cs      SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART..MINIMIZEEND) → WindowMinimizing /
                          WindowUnminimized events (the latter for external taskbar/Alt+Tab restores).
@@ -242,7 +269,9 @@ src/Dockable/
                          (exclusive or borderless-fullscreen)? Used by the dock + menu bar to hide.
     WindowControl.cs     Per-window transitions suppression, minimize/restore (incl. no-activate +
                          no-foreground variants), activate, restore-rect.
-    SystemTheme.cs       Reads the Windows light/dark app theme (registry AppsUseLightTheme).
+    SystemTheme.cs       Reads the Windows light/dark app theme (registry AppsUseLightTheme); also
+                         IsDarkEffective(DockTheme) + IsImmersiveColorChange(lParam), shared by the
+                         dock's and menu bar's ApplyTheme/WndProc so the two never drift.
     StartupManager.cs    HKCU Run-key "run at login" entries (IsEnabled/Enable/Disable).
     RecycleBin.cs        IsEmpty / Empty (with OS prompt) / SendToRecycleBin (SHFileOperation
                          FO_DELETE + FOF_ALLOWUNDO); state-aware empty/full icon via the shell.
@@ -254,8 +283,16 @@ src/Dockable/
     WindowCapture.cs     BitBlt(CAPTUREBLT) screen-grab of a window → BitmapSource.
     WindowThumbnailCache.cs  Caches a recent capture per visible window; also proactively suppresses
                          the foreground window's OS transitions.
-    GenieAnimator.cs     Pre-warmed reusable WPF-3D mesh-warp overlay; Style = Suck or Genie curve.
-    ScaleAnimator.cs     Pre-warmed reusable overlay that scales the capture down to the tile.
+    OverlayAnimatorBase.cs  Shared engine for both animators: the pre-warmed click-through overlay
+                         window lifecycle, the render loop (frame-rate cap that NEVER skips the final
+                         frame), FinishCurrent (finalize an in-flight play so its onCompleted isn't
+                         lost), and the _playSeq-guarded restore hold. Subclasses supply
+                         BuildOverlayContent/SetContent/PreparePlay/ApplyFrame(rawT)/BaseDurationMs.
+                         ApplyFrame receives the RAW warp t — easing is the subclass's business
+                         (the genie eases per-vertex; Scale SmoothSteps the whole frame).
+    GenieAnimator.cs     WPF-3D mesh-warp subclass; Style = Suck or Genie curve; RefreshQuality
+                         tears the overlay down so the next play rebuilds the mesh.
+    ScaleAnimator.cs     Subclass that scales the capture down to the tile.
     IMinimizeAnimator.cs Common Play/Prewarm interface; DockWindow picks the animator per setting.
     RefractionEffect.cs  WPF ShaderEffect refracting the captured backdrop (liquid-glass rim distortion).
   Converters/
@@ -819,6 +856,26 @@ src/Dockable/
   UI uses `Loc.T(key)`; menus that are built once (the tray menu) rebuild on `Loc.LanguageChanged`.
   Add a new string by adding the key to **every** table in `LocData` (English is the fallback).
   Brand/tech names ("Dockable", C#, WPF, CsWin32, …) and the author's name stay untranslated.
+- **Perf invariants from the 2026-07 optimization pass** — keep these when touching the hot paths:
+  - **The render loop is allocation-free per frame.** `DockLayoutEngine.Update` refills a reusable
+    `_placed` scratch list (it never escapes the call — keep it that way); `UpdateGlassShape`
+    early-returns when both refraction effects are null and assigns the two fields directly (no temp
+    array). Don't reintroduce per-frame `new`.
+  - **DPI is cached** (`DockWindow._dpi` via the `Dpi` accessor, refreshed by `OnDpiChanged`) for the
+    per-frame SyncAcrylic/PublishGlassRect/UpdateGlassClip path, and SyncAcrylic threads its
+    already-projected bar top-left into `UpdateGlassClip(Point?)`. PublishGlassRect projects a
+    DIFFERENT point — don't "unify" it. Non-per-frame code may keep calling
+    `VisualTreeHelper.GetDpi` directly.
+  - **TaskbarApps.EnumerateAppWindows must stay cheap** — it runs every ~1 s plus on demand. Window
+    identity (exe/AUMID) comes from `IdentityCache`; anything newly per-window-per-tick needs the
+    same treatment. The dock's UIA/screen-reader names, minimize bookkeeping helpers
+    (`IsWindowRepresented`/`DropMinimizedTracking`), and `RestoreQueueNext` are the single owners of
+    their invariants — extend them rather than re-inlining copies.
+  - **OverlayAnimatorBase parity traps** (if you touch the minimize animators): `_playSeq` bumps in
+    Play/ShowAtSource/AnimateTo only, after the first ApplyFrame and before showing; FinishCurrent
+    runs in Play + ShowAtSource, never AnimateTo; the frame cap's `progress < 1.0` clause is the
+    never-skip-the-final-frame guarantee; CompleteRestoreHold invokes `done` first and checks
+    `_playSeq` twice; MonitorHeight is set only by Play/ShowAtSource.
 
 ## Status & roadmap
 

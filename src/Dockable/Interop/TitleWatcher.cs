@@ -1,6 +1,5 @@
 using Windows.Win32;
 using Windows.Win32.Foundation;
-using Windows.Win32.UI.Accessibility;
 
 namespace Dockable.Interop;
 
@@ -12,51 +11,41 @@ namespace Dockable.Interop;
 /// </summary>
 public sealed class TitleWatcher : IDisposable
 {
-    private readonly WINEVENTPROC _proc; // held to keep the delegate alive for the hooks
-    private UnhookWinEventSafeHandle? _foregroundHook;
-    private UnhookWinEventSafeHandle? _nameHook;
+    private readonly WinEventHook _foregroundHook;
+    private readonly WinEventHook _nameHook;
     private HWND _foreground; // the window whose name changes we currently care about
 
     public event Action? TitleChanged;
 
-    public TitleWatcher() => _proc = OnWinEvent;
+    public TitleWatcher()
+    {
+        _foregroundHook = new WinEventHook(PInvoke.EVENT_SYSTEM_FOREGROUND, PInvoke.EVENT_SYSTEM_FOREGROUND,
+            (hwnd, _) =>
+            {
+                _foreground = hwnd;
+                TitleChanged?.Invoke();
+            });
+        _nameHook = new WinEventHook(PInvoke.EVENT_OBJECT_NAMECHANGE, PInvoke.EVENT_OBJECT_NAMECHANGE,
+            (hwnd, _) =>
+            {
+                // The focused window retitled itself (tab switch, document edit, …).
+                if (hwnd == _foreground)
+                    TitleChanged?.Invoke();
+            });
+    }
 
     public void Start()
     {
-        if (_foregroundHook is { IsInvalid: false })
+        if (_foregroundHook.IsActive)
             return;
-        _foregroundHook = PInvoke.SetWinEventHook(
-            PInvoke.EVENT_SYSTEM_FOREGROUND, PInvoke.EVENT_SYSTEM_FOREGROUND,
-            default, _proc, idProcess: 0, idThread: 0, PInvoke.WINEVENT_OUTOFCONTEXT);
-        _nameHook = PInvoke.SetWinEventHook(
-            PInvoke.EVENT_OBJECT_NAMECHANGE, PInvoke.EVENT_OBJECT_NAMECHANGE,
-            default, _proc, idProcess: 0, idThread: 0, PInvoke.WINEVENT_OUTOFCONTEXT);
+        _foregroundHook.Start();
+        _nameHook.Start();
         _foreground = PInvoke.GetForegroundWindow();
-    }
-
-    private void OnWinEvent(HWINEVENTHOOK hook, uint @event, HWND hwnd, int idObject, int idChild,
-        uint idEventThread, uint dwmsEventTime)
-    {
-        if (idObject != 0 || idChild != 0) // the window itself, not a child element
-            return;
-
-        if (@event == PInvoke.EVENT_SYSTEM_FOREGROUND)
-        {
-            _foreground = hwnd;
-            TitleChanged?.Invoke();
-        }
-        else if (@event == PInvoke.EVENT_OBJECT_NAMECHANGE && hwnd == _foreground)
-        {
-            // The focused window retitled itself (tab switch, document edit, …).
-            TitleChanged?.Invoke();
-        }
     }
 
     public void Dispose()
     {
-        _foregroundHook?.Dispose();
-        _nameHook?.Dispose();
-        _foregroundHook = null;
-        _nameHook = null;
+        _foregroundHook.Dispose();
+        _nameHook.Dispose();
     }
 }

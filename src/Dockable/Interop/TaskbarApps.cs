@@ -154,28 +154,71 @@ public static class TaskbarApps
         var result = new List<RunningWindow>();
         PInvoke.EnumWindows((hwnd, _) =>
         {
-            if (IsTaskbarApp(hwnd, ownProcessId, out string exe, out string title))
-                result.Add(new RunningWindow(hwnd, exe, title, GetWindowAumid(hwnd)));
+            if (IsTaskbarApp(hwnd, ownProcessId, out uint pid))
+            {
+                var id = ResolveIdentity(hwnd, pid);
+                result.Add(new RunningWindow(hwnd, id.Exe, GetWindowTitle(hwnd), id.Aumid));
+            }
             return true;
         }, default);
+        EvictDeadIdentities();
         return result;
     }
 
-    private static unsafe bool IsTaskbarApp(HWND hwnd, uint ownProcessId, out string exePath, out string title)
+    /// <summary>A window's identity, resolved once per window lifetime. <see cref="Pid"/> detects
+    /// HWND recycling (a reused handle in a new process must not inherit the old identity);
+    /// <see cref="AumidRetries"/> covers apps that set their AUMID a beat after the window appears.</summary>
+    private sealed class WindowIdentity
     {
-        exePath = string.Empty;
-        title = string.Empty;
+        public uint Pid;
+        public string Exe = string.Empty;
+        public string Aumid = string.Empty;
+        public int AumidRetries;
+    }
 
-        if (!PInvoke.IsWindowVisible(hwnd))
+    private static readonly ConcurrentDictionary<IntPtr, WindowIdentity> IdentityCache = new();
+
+    /// <summary>The window's cached exe path + AUMID. Both are stable per window lifetime, and
+    /// resolving them fresh (an opened process handle + a COM property-store round trip, per window,
+    /// on the ~1 s taskbar refresh) was the enumeration's main cost. An empty exe (elevated process)
+    /// is cached too — the old per-tick resolve returned the same value every time.</summary>
+    private static WindowIdentity ResolveIdentity(HWND hwnd, uint pid)
+    {
+        if (!IdentityCache.TryGetValue((IntPtr)hwnd, out var id) || id.Pid != pid) // miss, or a recycled hwnd
+        {
+            id = new WindowIdentity { Pid = pid, Exe = GetProcessPath(pid), Aumid = GetWindowAumid(hwnd) };
+            IdentityCache[(IntPtr)hwnd] = id;
+        }
+        else if (id.Aumid.Length == 0 && id.AumidRetries < 3)
+        {
+            // Some apps set their AUMID shortly after the window first appears — re-query a bounded
+            // number of times so late-set AUMIDs are still picked up without a per-tick COM cost.
+            id.AumidRetries++;
+            string aumid = GetWindowAumid(hwnd);
+            if (aumid.Length > 0)
+                id.Aumid = aumid;
+        }
+        return id;
+    }
+
+    private static void EvictDeadIdentities()
+    {
+        foreach (var key in IdentityCache.Keys)
+            if (!PInvoke.IsWindow((HWND)key))
+                IdentityCache.TryRemove(key, out _);
+    }
+
+    private static unsafe bool IsTaskbarApp(HWND hwnd, uint ownProcessId, out uint pid)
+    {
+        pid = 0;
+
+        // Shared "normal app window" test (visible, titled, not a tool window, not our process)…
+        if (!WindowFilter.IsEligibleAppWindow(hwnd, ownProcessId))
             return false;
+
+        // …plus the taskbar-specific extras.
         if (!PInvoke.GetWindow(hwnd, GET_WINDOW_CMD.GW_OWNER).IsNull)
             return false; // owned windows aren't their own taskbar button
-        if (PInvoke.GetWindowTextLength(hwnd) == 0)
-            return false;
-
-        var exStyle = (WINDOW_EX_STYLE)(uint)PInvoke.GetWindowLongPtr(hwnd, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE);
-        if ((exStyle & WINDOW_EX_STYLE.WS_EX_TOOLWINDOW) != 0)
-            return false;
 
         // Skip cloaked windows (suspended UWP, other virtual desktops).
         int cloaked = 0;
@@ -183,15 +226,9 @@ public static class TaskbarApps
         if (cloaked != 0)
             return false;
 
-        uint pid;
-        PInvoke.GetWindowThreadProcessId(hwnd, &pid);
-        if (pid == 0 || pid == ownProcessId)
-            return false;
-
-        // The exe may be empty for elevated/protected processes (e.g. Task Manager) we can't read —
-        // that's fine; identity then comes from the window's AUMID or its own icon/title, like the taskbar.
-        exePath = GetProcessPath(pid);
-        title = GetWindowTitle(hwnd);
+        uint p;
+        PInvoke.GetWindowThreadProcessId(hwnd, &p); // re-read: WindowFilter doesn't expose it
+        pid = p;
         return true;
     }
 

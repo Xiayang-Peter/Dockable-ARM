@@ -3,6 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:Dockable.ViewModels"
         xmlns:conv="clr-namespace:Dockable.Converters"
+        xmlns:a11y="clr-namespace:Dockable.Accessibility"
+        xmlns:loc="clr-namespace:Dockable.Localization"
         xmlns:sys="clr-namespace:System;assembly=System.Runtime"
         Title="Dockable"
         WindowStyle="None"
@@ -22,7 +24,6 @@
     <Window.Resources>
         <conv:BoolToVisibilityConverter x:Key="BoolToVis" />
         <conv:FallbackVisibilityConverter x:Key="FallbackVis" />
-        <conv:LabelOpenConverter x:Key="LabelOpen" />
         <conv:AllTrueToVisibilityConverter x:Key="AllTrueToVis" />
         <conv:MultiplyConverter x:Key="Multiply" />
 
@@ -50,12 +51,14 @@
         <!-- One dock entry: Start logo for the Start item, otherwise an extracted icon.
              The container is sized/positioned by the layout engine (Width/Height/Canvas.Left/Top). -->
         <DataTemplate x:Key="DockItemTemplate" DataType="{x:Type vm:DockItemViewModel}">
-            <Grid x:Name="ItemRoot"
+            <!-- DockItemElement (a Grid) gives the item a UIA peer (name + Invoke) — a plain Grid
+                 would leave the whole dock invisible to screen readers. -->
+            <a11y:DockItemElement x:Name="ItemRoot"
                   Background="Transparent"
                   PreviewMouseLeftButtonDown="DockItem_PreviewMouseDown"
                   MouseLeftButtonUp="DockItem_Click"
                   PreviewMouseRightButtonUp="DockItem_RightClick">
-                <Grid.Style>
+                <a11y:DockItemElement.Style>
                     <Style TargetType="Grid">
                         <!-- Launcher icons use the regular arrow pointer (they're not links). Separators
                              show a resize cursor: up/down for a horizontal dock, left/right for a vertical one. -->
@@ -77,7 +80,7 @@
                             </MultiDataTrigger>
                         </Style.Triggers>
                     </Style>
-                </Grid.Style>
+                </a11y:DockItemElement.Style>
 
                 <!-- Windows Start logo: four tiles, with a more pronounced drop shadow than the icons. -->
                 <Viewbox Visibility="{Binding IsStartMenu, Converter={StaticResource BoolToVis}}">
@@ -199,7 +202,7 @@
                               Fill="{DynamicResource LabelBgBrush}" Data="M 0,0 L 14,0 L 7,7 Z" />
                     </StackPanel>
                 </Canvas>
-            </Grid>
+            </a11y:DockItemElement>
             <DataTemplate.Triggers>
                 <!-- Fade the hovered icon's label in; fade it out when the cursor leaves. -->
                 <Trigger Property="IsMouseOver" Value="True">
@@ -352,6 +355,7 @@
         </Border>
 
         <ItemsControl ItemsSource="{Binding Items}"
+                      AutomationProperties.Name="{loc:Loc A11y_Dock}"
                       ItemTemplate="{StaticResource DockItemTemplate}"
                       ItemContainerStyle="{StaticResource DockItemContainerStyle}"
                       Width="{Binding WindowWidth}"
@@ -392,7 +396,7 @@
                             <Border.Effect>
                                 <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.4" Color="#000000" />
                             </Border.Effect>
-                            <TextBlock Text="Remove" Foreground="{DynamicResource LabelTextBrush}" FontSize="12" FontWeight="SemiBold" />
+                            <TextBlock Text="{loc:Loc Tag_Remove}" Foreground="{DynamicResource LabelTextBrush}" FontSize="12" FontWeight="SemiBold" />
                         </Border>
                         <Path HorizontalAlignment="Center" Margin="0,-1.5,0,0"
                               Fill="{DynamicResource LabelBgBrush}" Data="M 0,0 L 14,0 L 7,7 Z" />

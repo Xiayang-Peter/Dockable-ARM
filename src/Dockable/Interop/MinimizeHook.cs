@@ -1,6 +1,5 @@
 using Windows.Win32;
 using Windows.Win32.Foundation;
-using Windows.Win32.UI.Accessibility;
 
 namespace Dockable.Interop;
 
@@ -13,9 +12,8 @@ namespace Dockable.Interop;
 /// </summary>
 public sealed class MinimizeHook : IDisposable
 {
-    private readonly WINEVENTPROC _proc; // held to keep the delegate alive for the hook
-    private readonly uint _ownProcessId;
-    private UnhookWinEventSafeHandle? _hook;
+    private readonly WinEventHook _hook;
+    private readonly uint _ownProcessId = (uint)Environment.ProcessId;
 
     /// <summary>Fires with the HWND of a window beginning to minimize.</summary>
     public event Action<IntPtr>? WindowMinimizing;
@@ -25,27 +23,13 @@ public sealed class MinimizeHook : IDisposable
     public event Action<IntPtr>? WindowUnminimized;
 
     public MinimizeHook()
-    {
-        _proc = OnWinEvent;
-        _ownProcessId = (uint)Environment.ProcessId;
-    }
+        => _hook = new WinEventHook(PInvoke.EVENT_SYSTEM_MINIMIZESTART, PInvoke.EVENT_SYSTEM_MINIMIZEEND,
+            OnMinimizeEvent, PInvoke.WINEVENT_OUTOFCONTEXT | PInvoke.WINEVENT_SKIPOWNPROCESS);
 
-    public void Start()
-    {
-        if (_hook is { IsInvalid: false })
-            return;
-        _hook = PInvoke.SetWinEventHook(
-            PInvoke.EVENT_SYSTEM_MINIMIZESTART, PInvoke.EVENT_SYSTEM_MINIMIZEEND,
-            default, _proc, idProcess: 0, idThread: 0,
-            PInvoke.WINEVENT_OUTOFCONTEXT | PInvoke.WINEVENT_SKIPOWNPROCESS);
-    }
+    public void Start() => _hook.Start();
 
-    private void OnWinEvent(HWINEVENTHOOK hook, uint @event, HWND hwnd, int idObject, int idChild,
-        uint idEventThread, uint dwmsEventTime)
+    private void OnMinimizeEvent(HWND hwnd, uint @event)
     {
-        // OBJID_WINDOW (0) / CHILDID_SELF (0): the window itself, not a child UI element.
-        if (idObject != 0 || idChild != 0)
-            return;
         if (@event == PInvoke.EVENT_SYSTEM_MINIMIZESTART)
         {
             if (WindowFilter.IsEligibleAppWindow(hwnd, _ownProcessId))
@@ -57,9 +41,5 @@ public sealed class MinimizeHook : IDisposable
         }
     }
 
-    public void Dispose()
-    {
-        _hook?.Dispose(); // SafeHandle calls UnhookWinEvent
-        _hook = null;
-    }
+    public void Dispose() => _hook.Dispose();
 }

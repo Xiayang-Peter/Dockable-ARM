@@ -30,25 +30,6 @@ public sealed class BoolToVisibilityConverter : IValueConverter
         => throw new NotSupportedException();
 }
 
-/// <summary>
-/// Drives the hover-label popup's IsOpen: open only when the item is hovered, has a label,
-/// and isn't being dragged. Bindings (in order): IsMouseOver (bool), ShowLabel (bool),
-/// IsDragging (bool).
-/// </summary>
-public sealed class LabelOpenConverter : IMultiValueConverter
-{
-    public object Convert(object[] values, Type targetType, object? parameter, CultureInfo culture)
-    {
-        bool hovered = values.Length > 0 && values[0] is true;
-        bool hasLabel = values.Length > 1 && values[1] is true;
-        bool dragging = values.Length > 2 && values[2] is true;
-        return hovered && hasLabel && !dragging;
-    }
-
-    public object[] ConvertBack(object value, Type[] targetTypes, object? parameter, CultureInfo culture)
-        => throw new NotSupportedException();
-}
-
 /// <summary>Visible only when every bound bool is true; otherwise Collapsed.</summary>
 public sealed class AllTrueToVisibilityConverter : IMultiValueConverter
 {

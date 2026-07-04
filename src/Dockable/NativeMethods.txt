@@ -81,14 +81,10 @@ MONITORINFO
 GetDpiForWindow
 
 // --- Genie effect: window capture + trigger ---
-PrintWindow
 GetForegroundWindow
 GetWindowRect
 ShowWindow
 IsIconic
-RegisterHotKey
-UnregisterHotKey
-HOT_KEY_MODIFIERS
 GetDC
 ReleaseDC
 CreateCompatibleDC

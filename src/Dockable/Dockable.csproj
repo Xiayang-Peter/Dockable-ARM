@@ -25,11 +25,14 @@
     <NeutralLanguage>en</NeutralLanguage>
   </PropertyGroup>
 
-  <!-- App icon: embedded in the exe (ApplicationIcon) and as resources for the tray / window icons. -->
+  <!-- App icon: embedded in the exe (ApplicationIcon) and as resources for the tray / window icons.
+       Dockable.ico doubles as the tray icon resource — its 16/32px frames render crisp at tray size. -->
   <ItemGroup>
+    <None Remove="Assets\Dockable.ico" />
     <None Remove="Assets\Dockable.png" />
     <None Remove="Assets\Dockable-32.png" />
     <None Remove="Assets\settings.png" />
+    <Resource Include="Assets\Dockable.ico" />
     <Resource Include="Assets\Dockable.png" />
     <Resource Include="Assets\Dockable-32.png" />
     <Resource Include="Assets\settings.png" />

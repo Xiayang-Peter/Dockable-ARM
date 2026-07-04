@@ -1,6 +1,4 @@
 using Windows.Win32;
-using Windows.Win32.Foundation;
-using Windows.Win32.UI.Accessibility;
 
 namespace Dockable.Interop;
 
@@ -14,41 +12,29 @@ namespace Dockable.Interop;
 /// </summary>
 public sealed class TaskbarHideWatcher : IDisposable
 {
-    private readonly WINEVENTPROC _proc; // held to keep the delegate alive for the hook
-    private UnhookWinEventSafeHandle? _hook;
-
-    public TaskbarHideWatcher() => _proc = OnWinEvent;
+    // We only care that a tray window just became visible — re-hide it (our own SW_HIDE fires
+    // EVENT_OBJECT_HIDE, which we don't listen for, so there's no feedback loop).
+    private readonly WinEventHook _hook = new(PInvoke.EVENT_OBJECT_SHOW, PInvoke.EVENT_OBJECT_SHOW,
+        (hwnd, _) =>
+        {
+            if (Taskbar.IsTrayWindow(hwnd))
+                Taskbar.Hide();
+        });
 
     /// <summary>Starts re-hiding the taskbar whenever Explorer shows it. No-op if already running or the
     /// taskbar process can't be found.</summary>
     public void Start()
     {
-        if (_hook is { IsInvalid: false })
+        if (_hook.IsActive)
             return;
         uint trayPid = Taskbar.TrayProcessId();
         if (trayPid == 0)
             return;
-        _hook = PInvoke.SetWinEventHook(
-            PInvoke.EVENT_OBJECT_SHOW, PInvoke.EVENT_OBJECT_SHOW,
-            default, _proc, trayPid, idThread: 0, PInvoke.WINEVENT_OUTOFCONTEXT);
+        _hook.Start(trayPid);
     }
 
     /// <summary>Stops watching (the taskbar is left in whatever state it's in).</summary>
-    public void Stop()
-    {
-        _hook?.Dispose(); // SafeHandle calls UnhookWinEvent
-        _hook = null;
-    }
-
-    private void OnWinEvent(HWINEVENTHOOK hook, uint @event, HWND hwnd, int idObject, int idChild,
-        uint idEventThread, uint dwmsEventTime)
-    {
-        // OBJID_WINDOW (0) / CHILDID_SELF (0): the window itself, not a child element. We only care that
-        // a tray window just became visible — re-hide it (our own SW_HIDE fires EVENT_OBJECT_HIDE, which
-        // we don't listen for, so there's no feedback loop).
-        if (idObject == 0 && idChild == 0 && Taskbar.IsTrayWindow(hwnd))
-            Taskbar.Hide();
-    }
+    public void Stop() => _hook.Stop();
 
     public void Dispose() => Stop();
 }

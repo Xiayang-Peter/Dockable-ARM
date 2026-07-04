@@ -3,6 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:Dockable.ViewModels"
         xmlns:conv="clr-namespace:Dockable.Converters"
+        xmlns:a11y="clr-namespace:Dockable.Accessibility"
+        xmlns:loc="clr-namespace:Dockable.Localization"
         Title="Dockable Menu Bar"
         WindowStyle="None"
         AllowsTransparency="True"
@@ -38,11 +40,12 @@
                      fully round) that ActivateHighlight/FlashPill paint with MenuHighlightBrush
                      while the item's menu is open. Pill padding is offset by negative margins so
                      the text/glyph positions match the padless layout exactly. -->
-                <Border x:Name="StartButton"
+                <a11y:InvokableCell x:Name="StartButton"
                         Background="Transparent"
                         Cursor="Hand"
                         Padding="4,0,4,0"
-                        ToolTip="Menu"
+                        ToolTip="{loc:Loc MenuBar_Tip_Menu}"
+                        AutomationProperties.Name="{loc:Loc MenuBar_Tip_Menu}"
                         MouseLeftButtonUp="WindowsLogo_Click">
                     <Border x:Name="StartPill"
                             Height="22" CornerRadius="11" Padding="8,0"
@@ -55,13 +58,14 @@
                                   Data="M0,0 H2311 V2310 H0 Z M2564,0 H4875 V2310 H2564 Z M0,2564 H2311 V4875 H0 Z M2564,2564 H4875 V4875 H2564 Z" />
                         </Viewbox>
                     </Border>
-                </Border>
+                </a11y:InvokableCell>
                 <!-- Focused app's display name — click for the window's title-bar (system) menu. -->
-                <Border x:Name="AppNamePill"
+                <a11y:InvokableCell x:Name="AppNamePill"
                         Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,-8,0"
                         Background="Transparent"
                         Cursor="Hand"
                         VerticalAlignment="Center"
+                        AutomationProperties.Name="{Binding AppName}"
                         MouseLeftButtonUp="AppName_Click">
                     <TextBlock x:Name="AppNameText"
                                Text="{Binding AppName}"
@@ -70,7 +74,7 @@
                                FontWeight="SemiBold"
                                VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis" />
-                </Border>
+                </a11y:InvokableCell>
 
                 <!-- The focused app's in-window menu ("File", "Edit", …) mirrored as global menus.
                      Win32-menu apps get their real dropdown hosted under the label; UIA-only apps
@@ -87,16 +91,17 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
                             <!-- 18px label spacing preserved: 8 pill pad + 10 margin − next's −8. -->
-                            <Border Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,10,0"
+                            <a11y:InvokableCell Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,10,0"
                                     Background="Transparent"
                                     Cursor="Hand"
                                     VerticalAlignment="Center"
+                                    AutomationProperties.Name="{Binding Label}"
                                     MouseLeftButtonUp="AppMenu_Click">
                                 <TextBlock Text="{Binding Label}"
                                            Foreground="{DynamicResource MenuTextBrush}"
                                            FontSize="13"
                                            VerticalAlignment="Center" />
-                            </Border>
+                            </a11y:InvokableCell>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
@@ -110,9 +115,10 @@
                 <!-- Trailing items share the pill treatment: 16px item spacing preserved as
                      8 pill pad + 8 margin − the next pill's −8. -->
                 <!-- System-tray overflow ("show hidden icons") — opens the OS flyout. -->
-                <Border Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,8,0"
+                <a11y:InvokableCell Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,8,0"
                         Background="Transparent" Cursor="Hand" VerticalAlignment="Center"
-                        ToolTip="Show hidden icons"
+                        ToolTip="{loc:Loc MenuBar_Tip_HiddenIcons}"
+                        AutomationProperties.Name="{loc:Loc MenuBar_Tip_HiddenIcons}"
                         MouseLeftButtonUp="TrayOverflow_Click">
                     <TextBlock x:Name="TrayOverflowButton"
                                Text="&#xE70D;"
@@ -120,12 +126,13 @@
                                Foreground="{DynamicResource MenuTextBrush}"
                                FontSize="12"
                                VerticalAlignment="Center" />
-                </Border>
+                </a11y:InvokableCell>
 
                 <!-- Quick Settings (network/sound) — opens the OS flyout via Win+A. -->
-                <Border Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,8,0"
+                <a11y:InvokableCell Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,8,0"
                         Background="Transparent" Cursor="Hand" VerticalAlignment="Center"
-                        ToolTip="Quick Settings"
+                        ToolTip="{loc:Loc MenuBar_Tip_QuickSettings}"
+                        AutomationProperties.Name="{loc:Loc MenuBar_Tip_QuickSettings}"
                         MouseLeftButtonUp="QuickSettings_Click">
                     <StackPanel x:Name="QuickSettingsButton"
                                 Orientation="Horizontal"
@@ -142,13 +149,14 @@
                                    VerticalAlignment="Center"
                                    Margin="6,0,0,0" />
                     </StackPanel>
-                </Border>
+                </a11y:InvokableCell>
 
                 <!-- Battery: level glyph + percentage. Hidden on machines with no battery (desktops).
                      Click opens the OS Power & battery settings. -->
-                <Border Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,8,0"
+                <a11y:InvokableCell Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,8,0"
                         Background="Transparent" Cursor="Hand" VerticalAlignment="Center"
-                        ToolTip="Power &amp; battery"
+                        ToolTip="{loc:Loc MenuBar_Tip_Battery}"
+                        AutomationProperties.Name="{loc:Loc MenuBar_Tip_Battery}"
                         Visibility="{Binding HasBattery, Converter={StaticResource BoolToVisibility}}"
                         MouseLeftButtonUp="Battery_Click">
                     <StackPanel x:Name="BatteryButton"
@@ -165,14 +173,15 @@
                                    VerticalAlignment="Center"
                                    Margin="4,0,0,0" />
                     </StackPanel>
-                </Border>
+                </a11y:InvokableCell>
 
                 <!-- Notifications / calendar — opens the OS flyout via Win+N. (Live tray-icon
                      replication isn't viable on Windows 11 25H2 — see the spike notes — so this is the
                      reliable, update-proof stand-in for tray access.) -->
-                <Border Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,8,0"
+                <a11y:InvokableCell Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,8,0"
                         Background="Transparent" Cursor="Hand" VerticalAlignment="Center"
-                        ToolTip="Notifications"
+                        ToolTip="{loc:Loc MenuBar_Tip_Notifications}"
+                        AutomationProperties.Name="{loc:Loc MenuBar_Tip_Notifications}"
                         MouseLeftButtonUp="Notifications_Click">
                     <TextBlock x:Name="NotificationsButton"
                                Text="&#xE7E7;"
@@ -180,11 +189,13 @@
                                Foreground="{DynamicResource MenuTextBrush}"
                                FontSize="14"
                                VerticalAlignment="Center" />
-                </Border>
+                </a11y:InvokableCell>
 
                 <!-- Keyboard layout — click to switch the active app's input language. -->
-                <Border Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,8,0"
+                <a11y:InvokableCell Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,8,0"
                         Background="Transparent" Cursor="Hand" VerticalAlignment="Center"
+                        ToolTip="{loc:Loc MenuBar_Tip_Keyboard}"
+                        AutomationProperties.Name="{loc:Loc MenuBar_Tip_Keyboard}"
                         MouseLeftButtonUp="Keyboard_Click">
                     <TextBlock x:Name="KeyboardText"
                                Text="{Binding KeyboardLabel}"
@@ -192,19 +203,20 @@
                                FontSize="12"
                                FontWeight="SemiBold"
                                VerticalAlignment="Center" />
-                </Border>
+                </a11y:InvokableCell>
 
                 <!-- Clock — click to open the Windows "Date & time" settings. -->
-                <Border Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,-8,0"
+                <a11y:InvokableCell Height="22" CornerRadius="11" Padding="8,0" Margin="-8,0,-8,0"
                         Background="Transparent" Cursor="Hand" VerticalAlignment="Center"
-                        ToolTip="Date &amp; time settings"
+                        ToolTip="{loc:Loc MenuBar_Tip_Clock}"
+                        AutomationProperties.Name="{loc:Loc MenuBar_Tip_Clock}"
                         MouseLeftButtonUp="Clock_Click">
                     <TextBlock x:Name="ClockText"
                                Text="{Binding TimeText}"
                                Foreground="{DynamicResource MenuTextBrush}"
                                FontSize="12"
                                VerticalAlignment="Center" />
-                </Border>
+                </a11y:InvokableCell>
             </StackPanel>
         </Grid>
     </Border>

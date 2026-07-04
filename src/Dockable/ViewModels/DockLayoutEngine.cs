@@ -73,6 +73,7 @@ public sealed class DockLayoutEngine
     private double _gapExtent;         // eased width of the drag/drop placeholder gap (0 when closed)
 
     private DockItemViewModel? _dragItem;
+    private readonly List<DockItemViewModel> _placed = new(); // per-frame scratch (see Update)
     private bool _settling;
     private double _lastMouseMain = double.NegativeInfinity; // cursor state of the last real frame,
     private bool _lastHovering;                              // reused by Recompute's nominal step
@@ -278,7 +279,10 @@ public sealed class DockLayoutEngine
         }
 
         // --- Placed items = everything except the floating dragged tile ---
-        var placed = new List<DockItemViewModel>(n);
+        // Reused across frames (Update runs per rendered frame on the UI thread; the list never
+        // escapes this call) so magnification doesn't allocate a list every frame.
+        var placed = _placed;
+        placed.Clear();
         foreach (var item in items)
             if (!ReferenceEquals(item, _dragItem))
                 placed.Add(item);

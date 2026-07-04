@@ -1,6 +1,4 @@
 using Windows.Win32;
-using Windows.Win32.Foundation;
-using Windows.Win32.UI.Accessibility;
 
 namespace Dockable.Interop;
 
@@ -11,32 +9,15 @@ namespace Dockable.Interop;
 /// </summary>
 public sealed class ForegroundWatcher : IDisposable
 {
-    private readonly WINEVENTPROC _proc; // held to keep the delegate alive for the hook
-    private UnhookWinEventSafeHandle? _hook;
+    private readonly WinEventHook _hook;
 
     public event Action? ForegroundChanged;
 
-    public ForegroundWatcher() => _proc = OnWinEvent;
+    public ForegroundWatcher()
+        => _hook = new WinEventHook(PInvoke.EVENT_SYSTEM_FOREGROUND, PInvoke.EVENT_SYSTEM_FOREGROUND,
+            (_, _) => ForegroundChanged?.Invoke());
 
-    public void Start()
-    {
-        if (_hook is { IsInvalid: false })
-            return;
-        _hook = PInvoke.SetWinEventHook(
-            PInvoke.EVENT_SYSTEM_FOREGROUND, PInvoke.EVENT_SYSTEM_FOREGROUND,
-            default, _proc, idProcess: 0, idThread: 0, PInvoke.WINEVENT_OUTOFCONTEXT);
-    }
+    public void Start() => _hook.Start();
 
-    private void OnWinEvent(HWINEVENTHOOK hook, uint @event, HWND hwnd, int idObject, int idChild,
-        uint idEventThread, uint dwmsEventTime)
-    {
-        if (idObject == 0 && idChild == 0) // the window itself, not a child element
-            ForegroundChanged?.Invoke();
-    }
-
-    public void Dispose()
-    {
-        _hook?.Dispose();
-        _hook = null;
-    }
+    public void Dispose() => _hook.Dispose();
 }

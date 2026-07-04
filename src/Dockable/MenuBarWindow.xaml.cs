@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -375,11 +375,11 @@ public partial class MenuBarWindow : Window
     {
         var menu = new ContextMenu();
 
-        AddItem(menu, Loc.T("Menu_AboutThisPC"), () => ShortcutService.Launch("ms-settings:about"));
+        MenuBuilder.AddItem(menu, Loc.T("Menu_AboutThisPC"), () => ShortcutService.Launch("ms-settings:about"));
         menu.Items.Add(new Separator());
-        AddItem(menu, Loc.T("Menu_SystemSettings"), () => ShortcutService.Launch("ms-settings:"));
-        AddItem(menu, Loc.T("Menu_TaskManager"), () => ShortcutService.Launch("taskmgr.exe"));
-        AddItem(menu, Loc.T("Menu_MicrosoftStore"), () => ShortcutService.Launch("ms-windows-store://home"));
+        MenuBuilder.AddItem(menu, Loc.T("Menu_SystemSettings"), () => ShortcutService.Launch("ms-settings:"));
+        MenuBuilder.AddItem(menu, Loc.T("Menu_TaskManager"), () => ShortcutService.Launch("taskmgr.exe"));
+        MenuBuilder.AddItem(menu, Loc.T("Menu_MicrosoftStore"), () => ShortcutService.Launch("ms-windows-store://home"));
         menu.Items.Add(new Separator());
 
         // Recent (currently open) apps → bring all of an app's windows to the front.
@@ -402,13 +402,13 @@ public partial class MenuBarWindow : Window
         menu.Items.Add(forceQuit);
         menu.Items.Add(new Separator());
 
-        AddItem(menu, Loc.T("Menu_Sleep"), SystemActions.Sleep);
-        AddItem(menu, Loc.T("Menu_Restart"), () => ConfirmThen("Confirm_Restart", SystemActions.Restart));
-        AddItem(menu, Loc.T("Menu_ShutDown"), () => ConfirmThen("Confirm_ShutDown", SystemActions.ShutDown));
+        MenuBuilder.AddItem(menu, Loc.T("Menu_Sleep"), SystemActions.Sleep);
+        MenuBuilder.AddItem(menu, Loc.T("Menu_Restart"), () => ConfirmThen("Confirm_Restart", SystemActions.Restart));
+        MenuBuilder.AddItem(menu, Loc.T("Menu_ShutDown"), () => ConfirmThen("Confirm_ShutDown", SystemActions.ShutDown));
         menu.Items.Add(new Separator());
 
-        AddItem(menu, Loc.T("Menu_LockScreen"), SystemActions.Lock);
-        AddItem(menu, string.Format(Loc.T("Menu_LogOut"), SystemActions.CurrentUserDisplayName()),
+        MenuBuilder.AddItem(menu, Loc.T("Menu_LockScreen"), SystemActions.Lock);
+        MenuBuilder.AddItem(menu, string.Format(Loc.T("Menu_LogOut"), SystemActions.CurrentUserDisplayName()),
             () => ConfirmThen("Confirm_LogOut", SystemActions.LogOut));
 
         return menu;
@@ -426,12 +426,12 @@ public partial class MenuBarWindow : Window
     private void Bar_RightClick(object sender, MouseButtonEventArgs e)
     {
         var menu = new ContextMenu();
-        AddItem(menu, Loc.T("Menu_TaskManager"), () => ShortcutService.Launch("taskmgr.exe"));
+        MenuBuilder.AddItem(menu, Loc.T("Menu_TaskManager"), () => ShortcutService.Launch("taskmgr.exe"));
         menu.Items.Add(new Separator());
-        AddItem(menu, Loc.T("Menu_DockPreferences"), () => FindDock()?.OpenDockPreferences());
-        AddItem(menu, Loc.T("Menu_AboutDockable"), () => FindDock()?.OpenDockPreferences("About"));
+        MenuBuilder.AddItem(menu, Loc.T("Menu_DockPreferences"), () => FindDock()?.OpenDockPreferences());
+        MenuBuilder.AddItem(menu, Loc.T("Menu_AboutDockable"), () => FindDock()?.OpenDockPreferences("About"));
         menu.Items.Add(new Separator());
-        AddItem(menu, Loc.T("Menu_QuitDockable"), () => Application.Current.Shutdown());
+        MenuBuilder.AddItem(menu, Loc.T("Menu_QuitDockable"), () => Application.Current.Shutdown());
         menu.Placement = PlacementMode.MousePoint;
         menu.IsOpen = true;
         e.Handled = true;
@@ -601,26 +601,21 @@ public partial class MenuBarWindow : Window
 
     private void ApplyTheme()
     {
-        bool dark = ViewModel?.Settings.Theme switch
-        {
-            DockTheme.Dark => true,
-            DockTheme.Light => false,
-            _ => !SystemTheme.IsLight(), // System: follow Windows
-        };
+        bool dark = SystemTheme.IsDarkEffective(ViewModel?.Settings.Theme ?? DockTheme.System);
 
         // Same bar colours as the dock, at 50% transparency (the acrylic blur shows through). Text
         // contrasts with the background per the Appearance (theme) setting.
         if (dark)
         {
-            Resources["BarBackgroundBrush"] = Brush("#80242424"); // dock dark bg (#242424) @ 50%
-            Resources["MenuTextBrush"] = Brush("#FFF2F2F2");
-            Resources["MenuHighlightBrush"] = Brush("#26FFFFFF"); // active pill: almost-transparent white
+            Resources["BarBackgroundBrush"] = UiBrushes.Frozen("#80242424"); // dock dark bg (#242424) @ 50%
+            Resources["MenuTextBrush"] = UiBrushes.Frozen("#FFF2F2F2");
+            Resources["MenuHighlightBrush"] = UiBrushes.Frozen("#26FFFFFF"); // active pill: almost-transparent white
         }
         else
         {
-            Resources["BarBackgroundBrush"] = Brush("#80FFFFFF"); // dock light bg (#FFFFFF) @ 50%
-            Resources["MenuTextBrush"] = Brush("#FF1D1D1F");
-            Resources["MenuHighlightBrush"] = Brush("#17000000"); // active pill: almost-transparent black
+            Resources["BarBackgroundBrush"] = UiBrushes.Frozen("#80FFFFFF"); // dock light bg (#FFFFFF) @ 50%
+            Resources["MenuTextBrush"] = UiBrushes.Frozen("#FF1D1D1F");
+            Resources["MenuHighlightBrush"] = UiBrushes.Frozen("#17000000"); // active pill: almost-transparent black
         }
     }
 
@@ -654,13 +649,6 @@ public partial class MenuBarWindow : Window
             SetPillActive(pill, false);
         };
         timer.Start();
-    }
-
-    private static SolidColorBrush Brush(string hex)
-    {
-        var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
-        brush.Freeze();
-        return brush;
     }
 
     // --- Glass backdrop ---
@@ -727,7 +715,7 @@ public partial class MenuBarWindow : Window
 
         if (msg == WM_SETTINGCHANGE
             && ViewModel?.Settings.Theme == DockTheme.System
-            && Marshal.PtrToStringAuto(lParam) == "ImmersiveColorSet")
+            && SystemTheme.IsImmersiveColorChange(lParam))
         {
             ApplyTheme();
         }

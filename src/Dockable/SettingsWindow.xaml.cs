@@ -1,9 +1,11 @@
-using System.Windows;
+﻿using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using Dockable.Accessibility;
 using Dockable.Interop;
 using Dockable.Localization;
 using Dockable.Models;
@@ -29,7 +31,7 @@ public partial class SettingsWindow : Window
     private const double MagLarge = 104;
     private const int MagSteps = 9; // slider Maximum; step 1 = Small, step 9 = Large
 
-    private static readonly Brush RingBrush = FrozenBrush("#0A84FF");
+    private static readonly Brush RingBrush = UiBrushes.Frozen(UiBrushes.AccentHex);
 
     private readonly DockViewModel _vm;
     private readonly Action<DockTheme> _setTheme;
@@ -95,12 +97,7 @@ public partial class SettingsWindow : Window
         TaskbarCombo.SelectedIndex = (int)s.TaskbarVisibility; // Always, Auto, Never (matches combo order)
 
         // Liquid Glass tuning sliders (clamped to each slider's range).
-        GlassBlurSlider.Value = Math.Clamp(s.GlassBlurRadius, GlassBlurSlider.Minimum, GlassBlurSlider.Maximum);
-        GlassDistortionSlider.Value = Math.Clamp(s.GlassDistortion, GlassDistortionSlider.Minimum, GlassDistortionSlider.Maximum);
-        GlassTintSlider.Value = Math.Clamp(s.GlassTintOpacity, GlassTintSlider.Minimum, GlassTintSlider.Maximum);
-        GlassSaturationSlider.Value = Math.Clamp(s.GlassSaturation, GlassSaturationSlider.Minimum, GlassSaturationSlider.Maximum);
-        GlassAberrationSlider.Value = Math.Clamp(s.GlassAberration, GlassAberrationSlider.Minimum, GlassAberrationSlider.Maximum);
-        GlassRimSlider.Value = Math.Clamp(s.GlassRimHighlight, GlassRimSlider.Minimum, GlassRimSlider.Maximum);
+        SyncGlassSlidersFromSettings();
 
         _initializing = false;
 
@@ -167,9 +164,9 @@ public partial class SettingsWindow : Window
         new("LiquidGlass", "LiquidGlass_RimHighlight", () => AdvancedRowOf(GlassRimSlider), "rim highlight glint sheen specular shine advanced"),
     };
 
-    private static readonly Brush ResultNameBrush = FrozenBrush("#1D1D1F");
-    private static readonly Brush ResultPanelBrush = FrozenBrush("#6E6E73");
-    private static readonly Brush ResultHoverBrush = FrozenBrush("#14000000");
+    private static readonly Brush ResultNameBrush = UiBrushes.Frozen(UiBrushes.InkHex);
+    private static readonly Brush ResultPanelBrush = UiBrushes.Frozen("#6E6E73");
+    private static readonly Brush ResultHoverBrush = UiBrushes.Frozen("#14000000");
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
@@ -251,7 +248,8 @@ public partial class SettingsWindow : Window
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
 
-        var row = new Border
+        // InvokableCell = a Border with a UIA peer, so screen readers can read + invoke the header.
+        var row = new InvokableCell
         {
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(8, 5, 8, 5),
@@ -260,6 +258,7 @@ public partial class SettingsWindow : Window
             Cursor = Cursors.Hand,
             Child = content,
         };
+        AutomationProperties.SetName(row, Loc.T(PanelNameKey(panel)));
         row.MouseEnter += (_, _) => row.Background = ResultHoverBrush;
         row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
         row.MouseLeftButtonUp += (_, _) => ShowSection(panel);
@@ -271,8 +270,8 @@ public partial class SettingsWindow : Window
     {
         Brush background = panel switch
         {
-            "DockMenuBar" => FrozenBrush("#0A84FF"),
-            "About" => FrozenBrush("#1D1D1F"),
+            "DockMenuBar" => UiBrushes.Frozen(UiBrushes.AccentHex),
+            "About" => UiBrushes.Frozen(UiBrushes.InkHex),
             // Liquid-glass sheen — mirrors the nav tile's radial gradient.
             "LiquidGlass" => new RadialGradientBrush
             {
@@ -288,7 +287,7 @@ public partial class SettingsWindow : Window
                     new GradientStop((Color)ColorConverter.ConvertFromString("#FFD60A"), 1),
                 },
             },
-            _ => FrozenBrush("#8E8E93"), // General
+            _ => UiBrushes.Frozen("#8E8E93"), // General
         };
         string glyph = panel switch
         {
@@ -318,7 +317,8 @@ public partial class SettingsWindow : Window
 
     private FrameworkElement BuildSearchResultRow(SettingEntry entry)
     {
-        var row = new Border
+        // InvokableCell = a Border with a UIA peer, so screen readers can read + invoke the result.
+        var row = new InvokableCell
         {
             CornerRadius = new CornerRadius(6),
             // Left padding aligns the name under the group header's label (badge 20 + 6 gap).
@@ -333,6 +333,7 @@ public partial class SettingsWindow : Window
                 TextTrimming = TextTrimming.CharacterEllipsis,
             },
         };
+        AutomationProperties.SetName(row, Loc.T(entry.NameKey));
         row.MouseEnter += (_, _) => row.Background = ResultHoverBrush;
         row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
         row.MouseLeftButtonUp += (_, _) => OpenSearchResult(entry);
@@ -454,8 +455,8 @@ public partial class SettingsWindow : Window
         label.Foreground = NavTextBrush;
     }
 
-    private static readonly Brush NavTextBrush = FrozenBrush("#1D1D1F");
-    private static readonly Brush NavSelectedBrush = FrozenBrush("#1C000000"); // light gray over the sidebar
+    private static readonly Brush NavTextBrush = UiBrushes.Frozen(UiBrushes.InkHex);
+    private static readonly Brush NavSelectedBrush = UiBrushes.Frozen("#1C000000"); // light gray over the sidebar
 
     // ResizeMode=CanResize adds a maximize box; remove it so the window can't jump to a corner — its
     // size is already capped to its content and the viewport.
@@ -641,48 +642,33 @@ public partial class SettingsWindow : Window
     }
 
     // --- Liquid Glass tuning ---
-    // Each writes its setting, persists, and pushes the change into the live shader via the callback.
 
-    private void GlassBlurSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    /// <summary>Shared handler for the six tuning sliders (they differ only in the settings field
+    /// they write): stores the value, persists, and pushes it into the live shader.</summary>
+    private void GlassSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_initializing) return;
-        _vm.Settings.GlassBlurRadius = e.NewValue;
+        var s = _vm.Settings;
+        if (ReferenceEquals(sender, GlassBlurSlider)) s.GlassBlurRadius = e.NewValue;
+        else if (ReferenceEquals(sender, GlassDistortionSlider)) s.GlassDistortion = e.NewValue;
+        else if (ReferenceEquals(sender, GlassTintSlider)) s.GlassTintOpacity = e.NewValue;
+        else if (ReferenceEquals(sender, GlassSaturationSlider)) s.GlassSaturation = e.NewValue;
+        else if (ReferenceEquals(sender, GlassAberrationSlider)) s.GlassAberration = e.NewValue;
+        else if (ReferenceEquals(sender, GlassRimSlider)) s.GlassRimHighlight = e.NewValue;
+        else return;
         ApplyGlassAndSave();
     }
 
-    private void GlassDistortionSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    /// <summary>Reflects the six Liquid Glass settings onto their sliders (clamped to each range).</summary>
+    private void SyncGlassSlidersFromSettings()
     {
-        if (_initializing) return;
-        _vm.Settings.GlassDistortion = e.NewValue;
-        ApplyGlassAndSave();
-    }
-
-    private void GlassTintSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        if (_initializing) return;
-        _vm.Settings.GlassTintOpacity = e.NewValue;
-        ApplyGlassAndSave();
-    }
-
-    private void GlassSaturationSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        if (_initializing) return;
-        _vm.Settings.GlassSaturation = e.NewValue;
-        ApplyGlassAndSave();
-    }
-
-    private void GlassAberrationSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        if (_initializing) return;
-        _vm.Settings.GlassAberration = e.NewValue;
-        ApplyGlassAndSave();
-    }
-
-    private void GlassRimSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        if (_initializing) return;
-        _vm.Settings.GlassRimHighlight = e.NewValue;
-        ApplyGlassAndSave();
+        var s = _vm.Settings;
+        GlassBlurSlider.Value = Math.Clamp(s.GlassBlurRadius, GlassBlurSlider.Minimum, GlassBlurSlider.Maximum);
+        GlassDistortionSlider.Value = Math.Clamp(s.GlassDistortion, GlassDistortionSlider.Minimum, GlassDistortionSlider.Maximum);
+        GlassTintSlider.Value = Math.Clamp(s.GlassTintOpacity, GlassTintSlider.Minimum, GlassTintSlider.Maximum);
+        GlassSaturationSlider.Value = Math.Clamp(s.GlassSaturation, GlassSaturationSlider.Minimum, GlassSaturationSlider.Maximum);
+        GlassAberrationSlider.Value = Math.Clamp(s.GlassAberration, GlassAberrationSlider.Minimum, GlassAberrationSlider.Maximum);
+        GlassRimSlider.Value = Math.Clamp(s.GlassRimHighlight, GlassRimSlider.Minimum, GlassRimSlider.Maximum);
     }
 
     // Restores the six Liquid Glass parameters to their defaults (from a fresh DockSettings).
@@ -697,13 +683,8 @@ public partial class SettingsWindow : Window
         s.GlassAberration = d.GlassAberration;
         s.GlassRimHighlight = d.GlassRimHighlight;
 
-        _initializing = true; // reflect onto the sliders without re-triggering each handler
-        GlassBlurSlider.Value = Math.Clamp(s.GlassBlurRadius, GlassBlurSlider.Minimum, GlassBlurSlider.Maximum);
-        GlassDistortionSlider.Value = Math.Clamp(s.GlassDistortion, GlassDistortionSlider.Minimum, GlassDistortionSlider.Maximum);
-        GlassTintSlider.Value = Math.Clamp(s.GlassTintOpacity, GlassTintSlider.Minimum, GlassTintSlider.Maximum);
-        GlassSaturationSlider.Value = Math.Clamp(s.GlassSaturation, GlassSaturationSlider.Minimum, GlassSaturationSlider.Maximum);
-        GlassAberrationSlider.Value = Math.Clamp(s.GlassAberration, GlassAberrationSlider.Minimum, GlassAberrationSlider.Maximum);
-        GlassRimSlider.Value = Math.Clamp(s.GlassRimHighlight, GlassRimSlider.Minimum, GlassRimSlider.Maximum);
+        _initializing = true; // reflect onto the sliders without re-triggering the handler
+        SyncGlassSlidersFromSettings();
         _initializing = false;
 
         ApplyGlassAndSave();
@@ -856,10 +837,4 @@ public partial class SettingsWindow : Window
         }
     }
 
-    private static Brush FrozenBrush(string hex)
-    {
-        var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
-        brush.Freeze();
-        return brush;
-    }
 }

@@ -1,7 +1,8 @@
-<Window x:Class="Dockable.SettingsWindow"
+﻿<Window x:Class="Dockable.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:loc="clr-namespace:Dockable.Localization"
+        xmlns:a11y="clr-namespace:Dockable.Accessibility"
         Title="{loc:Loc Window_DockPreferences}"
         WindowStyle="SingleBorderWindow"
         ResizeMode="CanResize"
@@ -360,6 +361,7 @@
                                    FontSize="12" Foreground="#8E8E93" VerticalAlignment="Center" Margin="0,0,6,0" />
                         <Grid Grid.Column="1">
                             <TextBox x:Name="SearchBox" BorderThickness="0" Background="Transparent"
+                                     AutomationProperties.Name="{loc:Loc Search_Placeholder}"
                                      VerticalAlignment="Center" FontSize="13" Foreground="#1D1D1F"
                                      TextChanged="SearchBox_TextChanged" />
                             <TextBlock x:Name="SearchHint" Text="{loc:Loc Search_Placeholder}" FontSize="13"
@@ -373,7 +375,8 @@
 
                 <StackPanel x:Name="NavList">
                 <!-- General -->
-                <Border x:Name="NavGeneral" Style="{StaticResource NavRow}" Tag="General"
+                <a11y:InvokableCell x:Name="NavGeneral" Style="{StaticResource NavRow}" Tag="General"
+                        AutomationProperties.Name="{loc:Loc Nav_General}"
                         MouseLeftButtonUp="NavItem_Click">
                     <StackPanel Orientation="Horizontal">
                         <Border Width="24" Height="24" CornerRadius="6" Background="#8E8E93">
@@ -382,10 +385,11 @@
                         <TextBlock x:Name="NavGeneralLabel" Text="{loc:Loc Nav_General}" Margin="10,0,0,0"
                                    VerticalAlignment="Center" FontSize="13" Foreground="#1D1D1F" />
                     </StackPanel>
-                </Border>
+                </a11y:InvokableCell>
 
                 <!-- Dock & Menu Bar -->
-                <Border x:Name="NavDockMenuBar" Style="{StaticResource NavRow}" Tag="DockMenuBar"
+                <a11y:InvokableCell x:Name="NavDockMenuBar" Style="{StaticResource NavRow}" Tag="DockMenuBar"
+                        AutomationProperties.Name="{loc:Loc Nav_DockMenuBar}"
                         MouseLeftButtonUp="NavItem_Click">
                     <StackPanel Orientation="Horizontal">
                         <Border Width="24" Height="24" CornerRadius="6" Background="#0A84FF">
@@ -394,10 +398,11 @@
                         <TextBlock x:Name="NavDockMenuBarLabel" Text="{loc:Loc Nav_DockMenuBar}" Margin="10,0,0,0"
                                    VerticalAlignment="Center" FontSize="13" Foreground="#1D1D1F" />
                     </StackPanel>
-                </Border>
+                </a11y:InvokableCell>
 
                 <!-- Liquid Glass -->
-                <Border x:Name="NavLiquidGlass" Style="{StaticResource NavRow}" Tag="LiquidGlass"
+                <a11y:InvokableCell x:Name="NavLiquidGlass" Style="{StaticResource NavRow}" Tag="LiquidGlass"
+                        AutomationProperties.Name="{loc:Loc Nav_LiquidGlass}"
                         MouseLeftButtonUp="NavItem_Click">
                     <StackPanel Orientation="Horizontal">
                         <Border Width="24" Height="24" CornerRadius="6">
@@ -416,10 +421,11 @@
                         <TextBlock x:Name="NavLiquidGlassLabel" Text="{loc:Loc Nav_LiquidGlass}" Margin="10,0,0,0"
                                    VerticalAlignment="Center" FontSize="13" Foreground="#1D1D1F" />
                     </StackPanel>
-                </Border>
+                </a11y:InvokableCell>
 
                 <!-- About -->
-                <Border x:Name="NavAbout" Style="{StaticResource NavRow}" Tag="About"
+                <a11y:InvokableCell x:Name="NavAbout" Style="{StaticResource NavRow}" Tag="About"
+                        AutomationProperties.Name="{loc:Loc Nav_About}"
                         MouseLeftButtonUp="NavItem_Click">
                     <StackPanel Orientation="Horizontal">
                         <Border Width="24" Height="24" CornerRadius="6" Background="#1D1D1F">
@@ -428,7 +434,7 @@
                         <TextBlock x:Name="NavAboutLabel" Text="{loc:Loc Nav_About}" Margin="10,0,0,0"
                                    VerticalAlignment="Center" FontSize="13" Foreground="#1D1D1F" />
                     </StackPanel>
-                </Border>
+                </a11y:InvokableCell>
                 </StackPanel>
             </StackPanel>
         </Border>
@@ -452,6 +458,7 @@
                             <Grid Height="44">
                                 <TextBlock Text="{loc:Loc Row_Language}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
                                 <ComboBox x:Name="LanguageCombo" Style="{StaticResource MacPopup}" HorizontalAlignment="Right"
+                                          AutomationProperties.Name="{loc:Loc Row_Language}"
                                           VerticalAlignment="Center" SelectionChanged="LanguageCombo_SelectionChanged" />
                             </Grid>
 
@@ -460,6 +467,7 @@
                             <Grid Height="44">
                                 <TextBlock Text="{loc:Loc Row_Performance}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
                                 <ComboBox x:Name="PerformanceCombo" Style="{StaticResource MacPopup}" HorizontalAlignment="Right"
+                                          AutomationProperties.Name="{loc:Loc Row_Performance}"
                                           VerticalAlignment="Center" SelectionChanged="PerformanceCombo_SelectionChanged">
                                     <ComboBoxItem Content="{loc:Loc Performance_Auto}" />
                                     <ComboBoxItem Content="{loc:Loc Performance_Quality}" />
@@ -471,16 +479,18 @@
                             <Grid Height="44">
                                 <TextBlock Text="{loc:Loc Row_OpenAtLogin}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
                                 <ToggleButton x:Name="OpenAtLoginSwitch" Style="{StaticResource MacSwitch}" HorizontalAlignment="Right"
+                                              AutomationProperties.Name="{loc:Loc Row_OpenAtLogin}"
                                               VerticalAlignment="Center" Click="OpenAtLoginSwitch_Click" />
                             </Grid>
                             <!-- Link to the Windows "Startup Apps" settings page (opens in a new window). -->
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Cursor="Hand"
+                            <a11y:InvokableRow Orientation="Horizontal" HorizontalAlignment="Right" Cursor="Hand"
+                                        AutomationProperties.Name="{loc:Loc Link_StartupApps}"
                                         Background="Transparent" MouseLeftButtonUp="StartupApps_Click" Margin="0,0,0,4">
                                 <TextBlock Text="{loc:Loc Link_StartupApps}" Foreground="#0A84FF" FontSize="12"
                                            TextDecorations="Underline" VerticalAlignment="Center" />
                                 <TextBlock Text="&#x2197;" Foreground="#0A84FF" FontSize="12"
                                            Margin="3,0,0,0" VerticalAlignment="Center" />
-                            </StackPanel>
+                            </a11y:InvokableRow>
                         </StackPanel>
                     </Border>
 
@@ -618,6 +628,7 @@
                         <Grid Height="44" Margin="16,0">
                             <TextBlock Text="{loc:Loc Row_ShowTaskbar}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
                             <ComboBox x:Name="TaskbarCombo" Style="{StaticResource MacPopup}" HorizontalAlignment="Right"
+                                      AutomationProperties.Name="{loc:Loc Row_ShowTaskbar}"
                                       VerticalAlignment="Center" SelectionChanged="TaskbarCombo_SelectionChanged">
                                 <ComboBoxItem Content="{loc:Loc Taskbar_Always}" />
                                 <ComboBoxItem Content="{loc:Loc Taskbar_Auto}" />
@@ -654,6 +665,7 @@
                                 <StackPanel Grid.Column="0">
                                     <TextBlock Text="{loc:Loc Label_Size}" Style="{StaticResource GroupLabel}" Margin="0,0,0,6" />
                                     <Slider x:Name="SizeSlider" Style="{StaticResource MacSlider}"
+                                            AutomationProperties.Name="{loc:Loc Label_Size}"
                                             Minimum="12" Maximum="64" IsSnapToTickEnabled="True" TickFrequency="1"
                                             ValueChanged="SizeSlider_ValueChanged" />
                                     <Grid Margin="0,2,0,0">
@@ -666,6 +678,7 @@
                                 <StackPanel Grid.Column="2">
                                     <TextBlock Text="{loc:Loc Label_Magnification}" Style="{StaticResource GroupLabel}" Margin="0,0,0,6" />
                                     <Slider x:Name="MagnificationSlider" Style="{StaticResource MacSlider}"
+                                            AutomationProperties.Name="{loc:Loc Label_Magnification}"
                                             Minimum="0" Maximum="9" IsSnapToTickEnabled="True" TickFrequency="1"
                                             ValueChanged="MagnificationSlider_ValueChanged" />
                                     <Grid Margin="0,2,0,0">
@@ -682,6 +695,7 @@
                             <Grid Height="44" Margin="16,0">
                                 <TextBlock Text="{loc:Loc Row_Position}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
                                 <ComboBox x:Name="PositionCombo" Style="{StaticResource MacPopup}" HorizontalAlignment="Right"
+                                          AutomationProperties.Name="{loc:Loc Row_Position}"
                                           VerticalAlignment="Center" SelectionChanged="PositionCombo_SelectionChanged">
                                     <ComboBoxItem Content="{loc:Loc Position_Bottom}" />
                                     <ComboBoxItem Content="{loc:Loc Position_Left}" />
@@ -695,6 +709,7 @@
                             <Grid Height="44" Margin="16,0">
                                 <TextBlock Text="{loc:Loc Row_MinimizeUsing}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
                                 <ComboBox x:Name="MinimizeCombo" Style="{StaticResource MacPopup}" HorizontalAlignment="Right"
+                                          AutomationProperties.Name="{loc:Loc Row_MinimizeUsing}"
                                           VerticalAlignment="Center" SelectionChanged="MinimizeCombo_SelectionChanged">
                                     <ComboBoxItem Content="{loc:Loc Minimize_Suck}" />
                                     <ComboBoxItem Content="{loc:Loc Minimize_Scale}" />
@@ -716,6 +731,7 @@
                                 <StackPanel Grid.Column="2">
                                     <!-- 5 snap positions: Slow, ·, Default, ·, Fast (ticks shown). -->
                                     <Slider x:Name="EffectSpeedSlider" Style="{StaticResource MacSlider}"
+                                            AutomationProperties.Name="{loc:Loc Label_EffectSpeed}"
                                             Minimum="0" Maximum="4" IsSnapToTickEnabled="True" TickFrequency="1"
                                             TickPlacement="BottomRight" ValueChanged="EffectSpeedSlider_ValueChanged" />
                                     <Grid Margin="0,2,0,0">
@@ -732,6 +748,7 @@
                             <Grid Height="44" Margin="16,0">
                                 <TextBlock Text="{loc:Loc Toggle_ShowIndicators}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
                                 <ToggleButton x:Name="IndicatorsSwitch" Style="{StaticResource MacSwitch}" HorizontalAlignment="Right"
+                                              AutomationProperties.Name="{loc:Loc Toggle_ShowIndicators}"
                                               VerticalAlignment="Center" Click="IndicatorsSwitch_Click" />
                             </Grid>
 
@@ -740,6 +757,7 @@
                             <Grid Height="44" Margin="16,0">
                                 <TextBlock Text="{loc:Loc Toggle_AnimateOpening}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
                                 <ToggleButton x:Name="AnimateOpeningSwitch" Style="{StaticResource MacSwitch}" HorizontalAlignment="Right"
+                                              AutomationProperties.Name="{loc:Loc Toggle_AnimateOpening}"
                                               VerticalAlignment="Center" Click="AnimateOpeningSwitch_Click" />
                             </Grid>
 
@@ -748,6 +766,7 @@
                             <Grid Height="44" Margin="16,0">
                                 <TextBlock Text="{loc:Loc Toggle_MinimizeIntoIcon}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
                                 <ToggleButton x:Name="MinimizeIntoIconSwitch" Style="{StaticResource MacSwitch}" HorizontalAlignment="Right"
+                                              AutomationProperties.Name="{loc:Loc Toggle_MinimizeIntoIcon}"
                                               VerticalAlignment="Center" Click="MinimizeIntoIconSwitch_Click" />
                             </Grid>
 
@@ -756,6 +775,7 @@
                             <Grid Height="44" Margin="16,0">
                                 <TextBlock Text="{loc:Loc Toggle_AutoHideDock}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
                                 <ToggleButton x:Name="AutoHideDockSwitch" Style="{StaticResource MacSwitch}" HorizontalAlignment="Right"
+                                              AutomationProperties.Name="{loc:Loc Toggle_AutoHideDock}"
                                               VerticalAlignment="Center" Click="AutoHideDockSwitch_Click" />
                             </Grid>
 
@@ -771,6 +791,7 @@
                         <Grid Height="44" Margin="16,0">
                             <TextBlock Text="{loc:Loc Toggle_ShowMenuBar}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
                             <ToggleButton x:Name="ShowMenuBarSwitch" Style="{StaticResource MacSwitch}" HorizontalAlignment="Right"
+                                          AutomationProperties.Name="{loc:Loc Toggle_ShowMenuBar}"
                                           VerticalAlignment="Center" Click="ShowMenuBarSwitch_Click" />
                         </Grid>
                     </Border>
@@ -793,6 +814,7 @@
                             <Grid Height="44" Margin="16,0">
                                 <TextBlock Text="{loc:Loc Row_GlassEffect}" Style="{StaticResource RowLabel}" HorizontalAlignment="Left" />
                                 <ComboBox x:Name="GlassEffectCombo" Style="{StaticResource MacPopup}" HorizontalAlignment="Right"
+                                          AutomationProperties.Name="{loc:Loc Row_GlassEffect}"
                                           VerticalAlignment="Center" SelectionChanged="GlassEffectCombo_SelectionChanged">
                                     <ComboBoxItem Content="{loc:Loc Glass_Translucent}" />
                                     <ComboBoxItem Content="{loc:Loc Glass_Acrylic}" />
@@ -806,7 +828,8 @@
 
                             <!-- Advanced: one-way reveal of the tuning sliders — shown only while the
                                  effect is Liquid Glass AND the sliders are still collapsed. -->
-                            <StackPanel x:Name="GlassAdvancedLink" Orientation="Horizontal" HorizontalAlignment="Right"
+                            <a11y:InvokableRow x:Name="GlassAdvancedLink" Orientation="Horizontal" HorizontalAlignment="Right"
+                                        AutomationProperties.Name="{loc:Loc LiquidGlass_Advanced}"
                                         Cursor="Hand" Background="Transparent" MouseLeftButtonUp="GlassAdvanced_Click"
                                         Margin="16,8,16,10">
                                 <TextBlock Text="{loc:Loc LiquidGlass_Advanced}" Foreground="#0A84FF" FontSize="12"
@@ -814,7 +837,7 @@
                                 <TextBlock Text="&#xE70D;"
                                            FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10"
                                            Foreground="#0A84FF" VerticalAlignment="Center" Margin="5,1,0,0" />
-                            </StackPanel>
+                            </a11y:InvokableRow>
 
                             <!-- Tuning sliders (behind Advanced; Liquid Glass only). -->
                             <StackPanel x:Name="GlassParamsPanel" Visibility="Collapsed">
@@ -829,7 +852,8 @@
                                                VerticalAlignment="Center" HorizontalAlignment="Left" />
                                     <StackPanel Grid.Column="2">
                                         <Slider x:Name="GlassBlurSlider" Style="{StaticResource MacSlider}"
-                                                Minimum="0" Maximum="6" ValueChanged="GlassBlurSlider_ValueChanged" />
+                                                AutomationProperties.Name="{loc:Loc LiquidGlass_BlurRadius}"
+                                                Minimum="0" Maximum="6" ValueChanged="GlassSlider_ValueChanged" />
                                         <Grid Margin="0,2,0,0">
                                             <TextBlock Text="{loc:Loc Caption_Less}" Style="{StaticResource Caption}" HorizontalAlignment="Left" />
                                             <TextBlock Text="{loc:Loc Caption_More}" Style="{StaticResource Caption}" HorizontalAlignment="Right" />
@@ -850,7 +874,8 @@
                                                VerticalAlignment="Center" HorizontalAlignment="Left" />
                                     <StackPanel Grid.Column="2">
                                         <Slider x:Name="GlassDistortionSlider" Style="{StaticResource MacSlider}"
-                                                Minimum="0" Maximum="80" ValueChanged="GlassDistortionSlider_ValueChanged" />
+                                                AutomationProperties.Name="{loc:Loc LiquidGlass_Distortion}"
+                                                Minimum="0" Maximum="80" ValueChanged="GlassSlider_ValueChanged" />
                                         <Grid Margin="0,2,0,0">
                                             <TextBlock Text="{loc:Loc Caption_Less}" Style="{StaticResource Caption}" HorizontalAlignment="Left" />
                                             <TextBlock Text="{loc:Loc Caption_More}" Style="{StaticResource Caption}" HorizontalAlignment="Right" />
@@ -871,7 +896,8 @@
                                                VerticalAlignment="Center" HorizontalAlignment="Left" />
                                     <StackPanel Grid.Column="2">
                                         <Slider x:Name="GlassTintSlider" Style="{StaticResource MacSlider}"
-                                                Minimum="0" Maximum="2" ValueChanged="GlassTintSlider_ValueChanged" />
+                                                AutomationProperties.Name="{loc:Loc LiquidGlass_Opacity}"
+                                                Minimum="0" Maximum="2" ValueChanged="GlassSlider_ValueChanged" />
                                         <Grid Margin="0,2,0,0">
                                             <TextBlock Text="{loc:Loc Caption_Less}" Style="{StaticResource Caption}" HorizontalAlignment="Left" />
                                             <TextBlock Text="{loc:Loc Caption_More}" Style="{StaticResource Caption}" HorizontalAlignment="Right" />
@@ -892,7 +918,8 @@
                                                VerticalAlignment="Center" HorizontalAlignment="Left" />
                                     <StackPanel Grid.Column="2">
                                         <Slider x:Name="GlassSaturationSlider" Style="{StaticResource MacSlider}"
-                                                Minimum="1" Maximum="2.5" ValueChanged="GlassSaturationSlider_ValueChanged" />
+                                                AutomationProperties.Name="{loc:Loc LiquidGlass_Saturation}"
+                                                Minimum="1" Maximum="2.5" ValueChanged="GlassSlider_ValueChanged" />
                                         <Grid Margin="0,2,0,0">
                                             <TextBlock Text="{loc:Loc Caption_Less}" Style="{StaticResource Caption}" HorizontalAlignment="Left" />
                                             <TextBlock Text="{loc:Loc Caption_More}" Style="{StaticResource Caption}" HorizontalAlignment="Right" />
@@ -913,7 +940,8 @@
                                                VerticalAlignment="Center" HorizontalAlignment="Left" />
                                     <StackPanel Grid.Column="2">
                                         <Slider x:Name="GlassAberrationSlider" Style="{StaticResource MacSlider}"
-                                                Minimum="0" Maximum="2" ValueChanged="GlassAberrationSlider_ValueChanged" />
+                                                AutomationProperties.Name="{loc:Loc LiquidGlass_Aberration}"
+                                                Minimum="0" Maximum="2" ValueChanged="GlassSlider_ValueChanged" />
                                         <Grid Margin="0,2,0,0">
                                             <TextBlock Text="{loc:Loc Caption_Less}" Style="{StaticResource Caption}" HorizontalAlignment="Left" />
                                             <TextBlock Text="{loc:Loc Caption_More}" Style="{StaticResource Caption}" HorizontalAlignment="Right" />
@@ -934,7 +962,8 @@
                                                VerticalAlignment="Center" HorizontalAlignment="Left" />
                                     <StackPanel Grid.Column="2">
                                         <Slider x:Name="GlassRimSlider" Style="{StaticResource MacSlider}"
-                                                Minimum="0" Maximum="1" ValueChanged="GlassRimSlider_ValueChanged" />
+                                                AutomationProperties.Name="{loc:Loc LiquidGlass_RimHighlight}"
+                                                Minimum="0" Maximum="1" ValueChanged="GlassSlider_ValueChanged" />
                                         <Grid Margin="0,2,0,0">
                                             <TextBlock Text="{loc:Loc Caption_Less}" Style="{StaticResource Caption}" HorizontalAlignment="Left" />
                                             <TextBlock Text="{loc:Loc Caption_More}" Style="{StaticResource Caption}" HorizontalAlignment="Right" />
@@ -945,12 +974,13 @@
                                 <Border Height="1" Background="#E3E3E3" Margin="16,0,0,0" />
 
                                 <!-- Reset to defaults -->
-                                <StackPanel x:Name="GlassResetLink" Orientation="Horizontal" HorizontalAlignment="Right"
+                                <a11y:InvokableRow x:Name="GlassResetLink" Orientation="Horizontal" HorizontalAlignment="Right"
+                                            AutomationProperties.Name="{loc:Loc LiquidGlass_Reset}"
                                             Cursor="Hand" Background="Transparent" MouseLeftButtonUp="GlassReset_Click"
                                             Margin="16,8,16,10">
                                     <TextBlock Text="{loc:Loc LiquidGlass_Reset}" Foreground="#0A84FF" FontSize="12"
                                                TextDecorations="Underline" VerticalAlignment="Center" />
-                                </StackPanel>
+                                </a11y:InvokableRow>
                             </StackPanel>
                         </StackPanel>
                     </Border>
@@ -963,7 +993,8 @@
                           PanningMode="VerticalOnly">
                 <StackPanel Margin="20">
                     <!-- App icon + name + tagline + version -->
-                    <Image x:Name="AboutAppImage" Width="88" Height="88" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                    <Image x:Name="AboutAppImage" Width="88" Height="88" HorizontalAlignment="Center" Margin="0,4,0,0"
+                           AutomationProperties.Name="Dockable" />
                     <TextBlock Text="Dockable" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,10,0,0" />
                     <TextBlock Text="{loc:Loc About_Tagline}" FontSize="13" Foreground="#3A3A3C"
                                HorizontalAlignment="Center" TextAlignment="Center" Margin="0,3,0,0" />
@@ -1052,7 +1083,8 @@
                             <DropShadowEffect BlurRadius="8" ShadowDepth="1" Opacity="0.12" Color="#000000" />
                         </Border.Effect>
                         <WrapPanel>
-                            <Border Style="{StaticResource TechChip}" Tag="https://dotnet.microsoft.com/languages/csharp"
+                            <a11y:InvokableCell Style="{StaticResource TechChip}" Tag="https://dotnet.microsoft.com/languages/csharp"
+                                    AutomationProperties.Name="C# · .NET 9"
                                     MouseLeftButtonUp="OpenLink_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <Border Style="{StaticResource TechBadge}" Background="#512BD4">
@@ -1061,8 +1093,9 @@
                                     <TextBlock Style="{StaticResource TechName}" Text="C# · .NET&#160;9" />
                                     <TextBlock Style="{StaticResource LinkGlyph}" />
                                 </StackPanel>
-                            </Border>
-                            <Border Style="{StaticResource TechChip}" Tag="https://learn.microsoft.com/dotnet/desktop/wpf/"
+                            </a11y:InvokableCell>
+                            <a11y:InvokableCell Style="{StaticResource TechChip}" Tag="https://learn.microsoft.com/dotnet/desktop/wpf/"
+                                    AutomationProperties.Name="WPF"
                                     MouseLeftButtonUp="OpenLink_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <Border Style="{StaticResource TechBadge}" Background="#0A84FF">
@@ -1071,8 +1104,9 @@
                                     <TextBlock Style="{StaticResource TechName}" Text="WPF" />
                                     <TextBlock Style="{StaticResource LinkGlyph}" />
                                 </StackPanel>
-                            </Border>
-                            <Border Style="{StaticResource TechChip}" Tag="https://github.com/microsoft/CsWin32"
+                            </a11y:InvokableCell>
+                            <a11y:InvokableCell Style="{StaticResource TechChip}" Tag="https://github.com/microsoft/CsWin32"
+                                    AutomationProperties.Name="CsWin32"
                                     MouseLeftButtonUp="OpenLink_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <Border Style="{StaticResource TechBadge}" Background="#0078D4">
@@ -1081,8 +1115,9 @@
                                     <TextBlock Style="{StaticResource TechName}" Text="CsWin32" />
                                     <TextBlock Style="{StaticResource LinkGlyph}" />
                                 </StackPanel>
-                            </Border>
-                            <Border Style="{StaticResource TechChip}" Tag="https://www.microsoft.com/windows/windows-11"
+                            </a11y:InvokableCell>
+                            <a11y:InvokableCell Style="{StaticResource TechChip}" Tag="https://www.microsoft.com/windows/windows-11"
+                                    AutomationProperties.Name="Windows 11"
                                     MouseLeftButtonUp="OpenLink_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <Border Style="{StaticResource TechBadge}" Background="#0067C0">
@@ -1091,8 +1126,9 @@
                                     <TextBlock Style="{StaticResource TechName}" Text="Windows 11" />
                                     <TextBlock Style="{StaticResource LinkGlyph}" />
                                 </StackPanel>
-                            </Border>
-                            <Border Style="{StaticResource TechChip}" Tag="https://github.com/CommunityToolkit/dotnet"
+                            </a11y:InvokableCell>
+                            <a11y:InvokableCell Style="{StaticResource TechChip}" Tag="https://github.com/CommunityToolkit/dotnet"
+                                    AutomationProperties.Name="CommunityToolkit.Mvvm"
                                     MouseLeftButtonUp="OpenLink_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <Border Style="{StaticResource TechBadge}" Background="#2EA44F">
@@ -1101,8 +1137,9 @@
                                     <TextBlock Style="{StaticResource TechName}" Text="CommunityToolkit.Mvvm" />
                                     <TextBlock Style="{StaticResource LinkGlyph}" />
                                 </StackPanel>
-                            </Border>
-                            <Border Style="{StaticResource TechChip}" Tag="https://github.com/HavenDV/H.NotifyIcon"
+                            </a11y:InvokableCell>
+                            <a11y:InvokableCell Style="{StaticResource TechChip}" Tag="https://github.com/HavenDV/H.NotifyIcon"
+                                    AutomationProperties.Name="H.NotifyIcon"
                                     MouseLeftButtonUp="OpenLink_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <Border Style="{StaticResource TechBadge}" Background="#FF9500">
@@ -1111,9 +1148,10 @@
                                     <TextBlock Style="{StaticResource TechName}" Text="H.NotifyIcon" />
                                     <TextBlock Style="{StaticResource LinkGlyph}" />
                                 </StackPanel>
-                            </Border>
+                            </a11y:InvokableCell>
                             <!-- SVG rendering for pinned files, stacks, and fan/grid views. -->
-                            <Border Style="{StaticResource TechChip}" Tag="https://github.com/ElinamLLC/SharpVectors"
+                            <a11y:InvokableCell Style="{StaticResource TechChip}" Tag="https://github.com/ElinamLLC/SharpVectors"
+                                    AutomationProperties.Name="SharpVectors"
                                     MouseLeftButtonUp="OpenLink_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <Border Style="{StaticResource TechBadge}" Background="#8E44AD">
@@ -1122,7 +1160,7 @@
                                     <TextBlock Style="{StaticResource TechName}" Text="SharpVectors" />
                                     <TextBlock Style="{StaticResource LinkGlyph}" />
                                 </StackPanel>
-                            </Border>
+                            </a11y:InvokableCell>
                         </WrapPanel>
                     </Border>
 

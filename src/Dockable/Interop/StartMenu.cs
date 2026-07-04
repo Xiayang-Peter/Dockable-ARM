@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
@@ -12,16 +11,7 @@ namespace Dockable.Interop;
 /// </summary>
 public static class StartMenu
 {
-    public static void Open()
-    {
-        Span<INPUT> inputs =
-        [
-            KeyEvent(VIRTUAL_KEY.VK_LWIN, keyUp: false),
-            KeyEvent(VIRTUAL_KEY.VK_LWIN, keyUp: true),
-        ];
-
-        PInvoke.SendInput(inputs, Marshal.SizeOf<INPUT>());
-    }
+    public static void Open() => SynthesizedInput.SendChord(VIRTUAL_KEY.VK_LWIN);
 
     /// <summary>
     /// True when a Windows shell CoreWindow is the foreground window — i.e. the Start menu (or
@@ -39,16 +29,5 @@ public static class StartMenu
         Span<char> buffer = stackalloc char[256];
         int length = PInvoke.GetClassName(hwnd, buffer);
         return length > 0 ? new string(buffer[..length]) : string.Empty;
-    }
-
-    private static INPUT KeyEvent(VIRTUAL_KEY key, bool keyUp)
-    {
-        var input = new INPUT { type = INPUT_TYPE.INPUT_KEYBOARD };
-        input.Anonymous.ki = new KEYBDINPUT
-        {
-            wVk = key,
-            dwFlags = keyUp ? KEYBD_EVENT_FLAGS.KEYEVENTF_KEYUP : 0,
-        };
-        return input;
     }
 }

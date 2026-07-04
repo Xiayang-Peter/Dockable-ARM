@@ -25,18 +25,18 @@ public sealed class WindowThumbnailCache : IDisposable
 
     private readonly Dictionary<IntPtr, WindowCapture.Result> _cache = new();
     private readonly LinkedList<IntPtr> _order = new(); // LRU: front = oldest
-    private readonly WINEVENTPROC _proc;                // held to keep the delegate alive
+    private readonly WinEventHook _hook;
     private readonly DispatcherTimer _timer;
     private readonly DispatcherTimer _settleTimer;
     private readonly uint _ownProcessId;
-    private UnhookWinEventSafeHandle? _hook;
     // The one window whose OS transitions we've disabled (so its minimize is instant and the
     // genie isn't racing the OS animation). Only the current foreground window is affected.
     private IntPtr _suppressedForeground;
 
     public WindowThumbnailCache()
     {
-        _proc = OnForeground;
+        _hook = new WinEventHook(PInvoke.EVENT_SYSTEM_FOREGROUND, PInvoke.EVENT_SYSTEM_FOREGROUND,
+            OnForeground, PInvoke.WINEVENT_OUTOFCONTEXT | PInvoke.WINEVENT_SKIPOWNPROCESS);
         _ownProcessId = (uint)Environment.ProcessId;
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(RefreshMs) };
         _timer.Tick += (_, _) => CaptureForeground();
@@ -46,12 +46,9 @@ public sealed class WindowThumbnailCache : IDisposable
 
     public void Start()
     {
-        if (_hook is { IsInvalid: false })
+        if (_hook.IsActive)
             return;
-        _hook = PInvoke.SetWinEventHook(
-            PInvoke.EVENT_SYSTEM_FOREGROUND, PInvoke.EVENT_SYSTEM_FOREGROUND,
-            default, _proc, idProcess: 0, idThread: 0,
-            PInvoke.WINEVENT_OUTOFCONTEXT | PInvoke.WINEVENT_SKIPOWNPROCESS);
+        _hook.Start();
         _timer.Start();
         CaptureForeground();
     }
@@ -71,12 +68,8 @@ public sealed class WindowThumbnailCache : IDisposable
             _order.Remove(hwnd);
     }
 
-    private void OnForeground(HWINEVENTHOOK hook, uint @event, HWND hwnd, int idObject, int idChild,
-        uint idEventThread, uint dwmsEventTime)
+    private void OnForeground(HWND hwnd, uint @event)
     {
-        if (idObject != 0 || idChild != 0)
-            return;
-
         // Suppress OS transitions immediately so even a quick minimize is instant. Capture is
         // deferred (debounced) so the window has time to settle on top first.
         if (WindowFilter.IsEligibleAppWindow(hwnd, _ownProcessId))
@@ -143,7 +136,6 @@ public sealed class WindowThumbnailCache : IDisposable
         if (_suppressedForeground != IntPtr.Zero && WindowControl.IsWindow(_suppressedForeground))
             WindowControl.SetTransitionsEnabled(_suppressedForeground, true);
         _suppressedForeground = IntPtr.Zero;
-        _hook?.Dispose();
-        _hook = null;
+        _hook.Dispose();
     }
 }

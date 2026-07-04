@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 
 namespace Dockable.Interop;
@@ -31,7 +32,14 @@ public readonly struct PinMatcher
         _explorerLike = explorerLike;
     }
 
-    public static PinMatcher For(string pinPath)
+    // Built matchers are cached: For runs for every pin on the ~1 s taskbar refresh, and its inputs
+    // (ResolveLinkTarget / GetLinkAumid) are themselves permanently memoized in TaskbarApps, so a
+    // matcher for a given pin path never changes. No eviction — the pin set is small + user-curated.
+    private static readonly ConcurrentDictionary<string, PinMatcher> Cache = new(StringComparer.OrdinalIgnoreCase);
+
+    public static PinMatcher For(string pinPath) => Cache.GetOrAdd(pinPath, Create);
+
+    private static PinMatcher Create(string pinPath)
     {
         bool isLink = pinPath.EndsWith(".lnk", Ci);
         string? targetExe = isLink ? TaskbarApps.ResolveLinkTarget(pinPath) : pinPath;

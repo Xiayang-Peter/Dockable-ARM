@@ -107,7 +107,8 @@ Created by **[Jezz Lucena](https://github.com/jezzlucena)**.
   auto-hide**, which is self-restoring — even a hard kill leaves a usable, reveal-on-edge taskbar.
 - Per-monitor-v2 DPI awareness; stays out of the Alt+Tab switcher.
 - **Single instance** — a second launch bows out to the running dock.
-- System tray icon (left-click toggles the dock; right-click for theme, preferences, about, and exit).
+- System tray icon (the app icon; clicking it with either button opens the same dock-wide menu as
+  right-clicking empty dock space).
 - Settings persist to `%APPDATA%\Dockable\settings.json`.
 
 ### Languages & About
@@ -154,6 +155,13 @@ The window itself (sidebar panels):
 - **In-code localization** (no `.resx`/satellite assemblies): a small `Loc` service + a
   `{loc:Loc Key=…}` XAML markup extension that updates bound text live on a language change.
 - Per-monitor-v2 DPI awareness declared in `app.manifest`.
+- **Tuned for an always-on process**: the magnification render loop is allocation-free per frame
+  (reused layout scratch list, cached DPI, no per-frame shader-shape work when Liquid Glass is off);
+  the 1-second taskbar refresh caches each window's identity (exe path + AppUserModelID) per HWND
+  instead of re-querying processes and COM property stores every tick; and the minimize animators
+  share one pre-warmed overlay engine.
+- **UIA / screen-reader support**: dock items, flyout rows, menu-bar buttons, and every Preferences
+  control expose localized names (and Invoke) to Windows UI Automation / Narrator.
 
 ## Build & run
 
@@ -211,10 +219,13 @@ src/Dockable/
   MenuBarWindow.xaml(.cs)  Optional macOS-style top menu bar (logo menu, global app menus, status cluster)
   SettingsWindow.xaml(.cs) "Dock Preferences" window (General / Dock & Menu Bar / Liquid Glass / About)
   ConfirmDialog.cs / InputDialog.cs  Small code-built Yes/No and text-prompt dialogs
+  DialogChrome.cs / UiBrushes.cs / MenuBuilder.cs  Shared dialog scaffolding, frozen-brush + palette
+                           constants, and menu-item builders used by the code-built UI
   Sounds.cs                Short UI sound effects (WAV) under Assets/Sounds
   app.manifest             Per-monitor-v2 DPI awareness
   NativeMethods.txt        CsWin32 API list
   Themes/                  ModernMenu.xaml — Windows 11-style context menus, applied app-wide
+  Accessibility/           UI Automation peers: named/invokable dock items and code-built click targets
   Localization/            Loc (runtime service), LocData (per-language string tables),
                            LocExtension ({loc:Loc Key=…} markup extension)
   Models/                  DockItem, DockItemKind, DockSettings, PinnedPath (pinned files/folders +
@@ -223,11 +234,14 @@ src/Dockable/
   Services/                SettingsStore (atomic JSON persistence)
   Shell/                   ShortcutService (launch + shell icon extraction), FolderContents (sorted
                            folder listing), StackIcon (composite stack tiles), SvgIcon (SVG rendering)
-  Interop/                 Start menu, monitors/DPI, AppBar, taskbar auto-hide, taskbar mirror,
-                           pin matching, minimize hooks (WinEvent + low-level gesture interception),
-                           window control, system theme, Recycle Bin, known folders, menu-bar interop
-  Genie/                   Window capture + thumbnail cache; Genie / Scale animators
-                           (IMinimizeAnimator); acrylic/liquid-glass backdrop; pre-warmed overlays
+  Interop/                 Start menu, monitors/DPI, AppBar, taskbar auto-hide, taskbar mirror
+                           (with a per-window identity cache), pin matching, a shared WinEventHook +
+                           SendInput chord helper, minimize hooks (WinEvent + low-level gesture
+                           interception), window control, system theme, Recycle Bin, known folders,
+                           menu-bar interop
+  Genie/                   Window capture + thumbnail cache; Genie / Scale animators built on a shared
+                           pre-warmed overlay engine (OverlayAnimatorBase / IMinimizeAnimator);
+                           liquid-glass refraction effect
   Converters/              XAML value converters
 ```
 

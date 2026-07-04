@@ -1,6 +1,7 @@
-using System.IO;
+﻿using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -10,6 +11,7 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Dockable.Accessibility;
 using Dockable.Genie;
 using Dockable.Interop;
 using Dockable.Localization;
@@ -221,25 +223,20 @@ public partial class DockWindow : Window
     /// <summary>Repaints the dock bar (and its theme-dependent elements) for the effective theme.</summary>
     private void ApplyTheme()
     {
-        bool dark = ViewModel?.Settings.Theme switch
-        {
-            DockTheme.Dark => true,
-            DockTheme.Light => false,
-            _ => !SystemTheme.IsLight(), // System: follow Windows
-        };
+        bool dark = SystemTheme.IsDarkEffective(ViewModel?.Settings.Theme ?? DockTheme.System);
 
         if (dark)
         {
             // .macos-dock-dark
             Resources["BarBackgroundBrush"] = BarTintBrush(0x66, 0x24, 0x24, 0x24);
-            Resources["BarBorderBrush"] = Brush("#14FFFFFF");
-            Resources["SeparatorBrush"] = Brush("#40FFFFFF");
-            Resources["RunningDotBrush"] = Brush("#CCFFFFFF"); // rgba(255,255,255,0.8)
-            Resources["FallbackBgBrush"] = Brush("#33FFFFFF");
-            Resources["FallbackTextBrush"] = Brush("#FFFFFFFF");
-            Resources["LabelBgBrush"] = Brush("#F22A2A30");
-            Resources["LabelBorderBrush"] = Brush("#33FFFFFF");
-            Resources["LabelTextBrush"] = Brush("#FFF2F2F2");
+            Resources["BarBorderBrush"] = UiBrushes.Frozen("#14FFFFFF");
+            Resources["SeparatorBrush"] = UiBrushes.Frozen("#40FFFFFF");
+            Resources["RunningDotBrush"] = UiBrushes.Frozen("#CCFFFFFF"); // rgba(255,255,255,0.8)
+            Resources["FallbackBgBrush"] = UiBrushes.Frozen("#33FFFFFF");
+            Resources["FallbackTextBrush"] = UiBrushes.Frozen("#FFFFFFFF");
+            Resources["LabelBgBrush"] = UiBrushes.Frozen("#F22A2A30");
+            Resources["LabelBorderBrush"] = UiBrushes.Frozen("#33FFFFFF");
+            Resources["LabelTextBrush"] = UiBrushes.Frozen("#FFF2F2F2");
             Resources["IconShadowInnerOpacity"] = 0.18;
             BarShadow.Opacity = 0.4;
             DockBackground.BorderThickness = new Thickness(1.5);
@@ -248,14 +245,14 @@ public partial class DockWindow : Window
         {
             // .macos-dock-light (background/border swapped from the original tints)
             Resources["BarBackgroundBrush"] = BarTintBrush(0x33, 0xFF, 0xFF, 0xFF);
-            Resources["BarBorderBrush"] = Brush("#66FFFFFF");
-            Resources["SeparatorBrush"] = Brush("#33000000");
-            Resources["RunningDotBrush"] = Brush("#B3000000"); // rgba(0,0,0,0.7)
-            Resources["FallbackBgBrush"] = Brush("#1F000000");
-            Resources["FallbackTextBrush"] = Brush("#CC000000");
-            Resources["LabelBgBrush"] = Brush("#F2F7F7FA");
-            Resources["LabelBorderBrush"] = Brush("#22000000");
-            Resources["LabelTextBrush"] = Brush("#1D1D1F");
+            Resources["BarBorderBrush"] = UiBrushes.Frozen("#66FFFFFF");
+            Resources["SeparatorBrush"] = UiBrushes.Frozen("#33000000");
+            Resources["RunningDotBrush"] = UiBrushes.Frozen("#B3000000"); // rgba(0,0,0,0.7)
+            Resources["FallbackBgBrush"] = UiBrushes.Frozen("#1F000000");
+            Resources["FallbackTextBrush"] = UiBrushes.Frozen("#CC000000");
+            Resources["LabelBgBrush"] = UiBrushes.Frozen("#F2F7F7FA");
+            Resources["LabelBorderBrush"] = UiBrushes.Frozen("#22000000");
+            Resources["LabelTextBrush"] = UiBrushes.Frozen(UiBrushes.InkHex);
             Resources["IconShadowInnerOpacity"] = 0.14;
             BarShadow.Opacity = 0.15;
             DockBackground.BorderThickness = new Thickness(1.5); // slightly thicker border on light glass
@@ -272,21 +269,21 @@ public partial class DockWindow : Window
         var app = Application.Current.Resources;
         if (dark)
         {
-            app["PopupMenuBackgroundBrush"] = Brush("#F52C2C2C");
-            app["PopupMenuBorderBrush"] = Brush("#14FFFFFF");
-            app["PopupMenuForegroundBrush"] = Brush("#FFF2F2F2");
-            app["PopupMenuDisabledBrush"] = Brush("#77FFFFFF");
-            app["PopupMenuHoverBrush"] = Brush("#17FFFFFF");
-            app["PopupMenuSeparatorBrush"] = Brush("#1FFFFFFF");
+            app["PopupMenuBackgroundBrush"] = UiBrushes.Frozen("#F52C2C2C");
+            app["PopupMenuBorderBrush"] = UiBrushes.Frozen("#14FFFFFF");
+            app["PopupMenuForegroundBrush"] = UiBrushes.Frozen("#FFF2F2F2");
+            app["PopupMenuDisabledBrush"] = UiBrushes.Frozen("#77FFFFFF");
+            app["PopupMenuHoverBrush"] = UiBrushes.Frozen("#17FFFFFF");
+            app["PopupMenuSeparatorBrush"] = UiBrushes.Frozen("#1FFFFFFF");
         }
         else
         {
-            app["PopupMenuBackgroundBrush"] = Brush("#F5F9F9F9");
-            app["PopupMenuBorderBrush"] = Brush("#1F000000");
-            app["PopupMenuForegroundBrush"] = Brush("#E4000000");
-            app["PopupMenuDisabledBrush"] = Brush("#72000000");
-            app["PopupMenuHoverBrush"] = Brush("#0F000000");
-            app["PopupMenuSeparatorBrush"] = Brush("#1A000000");
+            app["PopupMenuBackgroundBrush"] = UiBrushes.Frozen("#F5F9F9F9");
+            app["PopupMenuBorderBrush"] = UiBrushes.Frozen("#1F000000");
+            app["PopupMenuForegroundBrush"] = UiBrushes.Frozen("#E4000000");
+            app["PopupMenuDisabledBrush"] = UiBrushes.Frozen("#72000000");
+            app["PopupMenuHoverBrush"] = UiBrushes.Frozen("#0F000000");
+            app["PopupMenuSeparatorBrush"] = UiBrushes.Frozen("#1A000000");
         }
     }
 
@@ -313,13 +310,6 @@ public partial class DockWindow : Window
         ViewModel.Save();
         ApplyTheme();
         App.Current.RefreshMenuBarTheme(); // keep the menu bar's colours in step with the dock
-    }
-
-    private static SolidColorBrush Brush(string hex)
-    {
-        var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
-        brush.Freeze();
-        return brush;
     }
 
     /// <summary>Builds the bar tint brush from its base ARGB, scaling the alpha by the user's
@@ -578,17 +568,23 @@ public partial class DockWindow : Window
 
         if (toRaise.Count > 0)
             WindowControl.ActivateAll(toRaise);
-        RestoreNext(app, toRestore, 0);
+        RestoreQueueNext(toRestore, 0, app);
     }
 
-    /// <summary>Restores the queued minimized windows one at a time, chaining each animation to the next.</summary>
-    private void RestoreNext(DockItemViewModel app, List<(IntPtr Hwnd, DockItemViewModel? Tile, BitmapSource? Bitmap)> queue, int index)
+    /// <summary>Restores the queued minimized windows one at a time, chaining each animation to the
+    /// next. A tile aims at itself; an icon-stashed window aims at <paramref name="fallbackApp"/> (the
+    /// clicked app icon) or, when null, at whatever app icon currently claims it — or (0,0) if none.</summary>
+    private void RestoreQueueNext(List<(IntPtr Hwnd, DockItemViewModel? Tile, BitmapSource? Bitmap)> queue,
+        int index, DockItemViewModel? fallbackApp)
     {
         if (index >= queue.Count)
             return;
         var (hwnd, tile, bitmap) = queue[index];
-        Point target = tile is not null ? TileScreenCenter(tile) : TileScreenCenter(app);
-        RestoreWindowAnimated(hwnd, tile, target, bitmap, () => RestoreNext(app, queue, index + 1));
+        Point target = tile is not null ? TileScreenCenter(tile)
+            : fallbackApp is not null ? TileScreenCenter(fallbackApp)
+            : ViewModel?.FindAppForWindow(hwnd) is { } app ? TileScreenCenter(app)
+            : new Point(0, 0);
+        RestoreWindowAnimated(hwnd, tile, target, bitmap, () => RestoreQueueNext(queue, index + 1, fallbackApp));
     }
 
     private void OnForegroundChanged()
@@ -953,16 +949,22 @@ public partial class DockWindow : Window
     /// per-frame call from the render loop free.</summary>
     private void UpdateGlassShape()
     {
-        if (ViewModel is null || ViewModel.BarHeight <= 0)
+        // Both effects exist only while Liquid Glass refraction is active — skip the math (this is
+        // called per rendered frame) and don't allocate a temp array for the two fields.
+        if ((_glassRefractInner is null && _glassSpecEffect is null)
+            || ViewModel is null || ViewModel.BarHeight <= 0)
             return;
         double cornerFrac = BarCornerRadius / ViewModel.BarHeight;
         const double bezelFrac = 0.5; // rim band ≈ half the bar height
-        foreach (var fx in new[] { _glassRefractInner, _glassSpecEffect })
+        if (_glassRefractInner is not null)
         {
-            if (fx is null)
-                continue;
-            fx.CornerFraction = cornerFrac;
-            fx.BezelFraction = bezelFrac;
+            _glassRefractInner.CornerFraction = cornerFrac;
+            _glassRefractInner.BezelFraction = bezelFrac;
+        }
+        if (_glassSpecEffect is not null)
+        {
+            _glassSpecEffect.CornerFraction = cornerFrac;
+            _glassSpecEffect.BezelFraction = bezelFrac;
         }
     }
 
@@ -982,7 +984,7 @@ public partial class DockWindow : Window
             return;
         try
         {
-            var dpi = VisualTreeHelper.GetDpi(this);
+            var dpi = Dpi;
             bool vertical = ViewModel.Settings.Edge is DockEdge.Left or DockEdge.Right;
             double dipX = vertical ? ViewModel.BarLeft : 0;
             double dipY = vertical ? 0 : ViewModel.BarTop;
@@ -1068,7 +1070,9 @@ public partial class DockWindow : Window
     /// crops the backdrop brush's viewbox to the bar's slice of the fixed max-extent capture (the
     /// capture spans the whole window along the main axis — see PublishGlassRect). The bitmap is 96 DPI,
     /// so absolute viewbox units equal capture pixels.</summary>
-    private void UpdateGlassClip()
+    /// <param name="barTopLeftPx">The bar's screen top-left (device px) when the caller already
+    /// projected it this frame (SyncAcrylic); null → compute it here.</param>
+    private void UpdateGlassClip(Point? barTopLeftPx = null)
     {
         if (ViewModel is null || ViewModel.BarWidth <= 0 || ViewModel.BarHeight <= 0)
             return;
@@ -1076,8 +1080,8 @@ public partial class DockWindow : Window
 
         try
         {
-            var dpi = VisualTreeHelper.GetDpi(this);
-            var barTopLeft = PointToScreen(new Point(ViewModel.BarLeft, ViewModel.BarTop)); // device px
+            var dpi = Dpi;
+            var barTopLeft = barTopLeftPx ?? PointToScreen(new Point(ViewModel.BarLeft, ViewModel.BarTop)); // device px
             double barW = ViewModel.BarWidth * dpi.DpiScaleX;
             double barH = ViewModel.BarHeight * dpi.DpiScaleY;
             // The bar slice is what the user sees: the capturer's black-glitch test judges it alone.
@@ -1153,13 +1157,34 @@ public partial class DockWindow : Window
         ApplyGlassEffect();
     }
 
+    // The window's DPI, cached because SyncAcrylic/PublishGlassRect/UpdateGlassClip each read it per
+    // rendered frame; VisualTreeHelper.GetDpi walks up the visual tree every call. Refreshed by
+    // OnDpiChanged (per-monitor-v2 aware) on monitor moves / scale changes.
+    private DpiScale _dpi;
+
+    private DpiScale Dpi
+    {
+        get
+        {
+            if (_dpi.DpiScaleX == 0)
+                _dpi = VisualTreeHelper.GetDpi(this);
+            return _dpi;
+        }
+    }
+
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        _dpi = newDpi;
+    }
+
     /// <summary>Tracks the acrylic backdrop window to the bar's current screen rect (physical px) and
     /// keeps it z-ordered just below the dock. Called whenever the bar moves or resizes.</summary>
     private void SyncAcrylic()
     {
         if (ViewModel is null || _hwnd == IntPtr.Zero || ViewModel.BarWidth <= 0 || ViewModel.BarHeight <= 0)
             return;
-        var dpi = VisualTreeHelper.GetDpi(this);
+        var dpi = Dpi;
         var topLeft = PointToScreen(new Point(ViewModel.BarLeft, ViewModel.BarTop)); // device pixels
         int x = (int)Math.Round(topLeft.X);
         int y = (int)Math.Round(topLeft.Y);
@@ -1178,9 +1203,10 @@ public partial class DockWindow : Window
         _acrylic.SetBounds(x, y, w, h, corner, _hwnd);
         // Re-publish the fixed capture rect (only actually changes when the dock moves or is resized —
         // the capturer keeps grabbing the same max-extent region across a magnification gesture), THEN
-        // the clip + viewbox crop, which anchor to that rect's origin.
+        // the clip + viewbox crop, which anchor to that rect's origin. The bar's screen top-left was
+        // just computed above — hand it down so the clip doesn't re-project the same point.
         PublishGlassRect();
-        UpdateGlassClip();
+        UpdateGlassClip(topLeft);
     }
 
     private (double Left, double Top) ComputePlacement()
@@ -1672,7 +1698,7 @@ public partial class DockWindow : Window
         // The OS light/dark setting changed — re-theme if we're following the system.
         if (msg == WM_SETTINGCHANGE
             && ViewModel?.Settings.Theme == DockTheme.System
-            && Marshal.PtrToStringAuto(lParam) == "ImmersiveColorSet")
+            && SystemTheme.IsImmersiveColorChange(lParam))
         {
             ApplyTheme();
         }
@@ -1751,8 +1777,7 @@ public partial class DockWindow : Window
             var hwnd = _minimizeQueue.Dequeue();
             // Skip anything we're already handling (our own intercepted/cascade minimizes fire this event
             // too) or have already represented.
-            if (_busy.Contains(hwnd) || ViewModel.FindMinimizedWindow(hwnd) is not null
-                || _iconMinimized.ContainsKey(hwnd))
+            if (_busy.Contains(hwnd) || IsWindowRepresented(hwnd))
                 continue;
             // Use the capture taken while the window was still visible — capturing now (it's already
             // minimized) would grab a black sliver.
@@ -1764,6 +1789,21 @@ public partial class DockWindow : Window
             return; // resume once this window's warp finishes (MinimizeToDock always invokes onDone)
         }
         _minimizeDraining = false;
+    }
+
+    /// <summary>Whether the window already has a dock representation (a minimized tile or an
+    /// icon-stashed capture). Callers keep their own <c>_busy</c> and ViewModel-null checks.</summary>
+    private bool IsWindowRepresented(IntPtr hwnd)
+        => ViewModel!.FindMinimizedWindow(hwnd) is not null || _iconMinimized.ContainsKey(hwnd);
+
+    /// <summary>Drops all dock minimize tracking for a window: its tile (if any), its icon-stashed
+    /// capture, and its captured source rect.</summary>
+    private void DropMinimizedTracking(IntPtr hwnd, DockItemViewModel? tile)
+    {
+        if (tile is not null)
+            ViewModel!.RemoveMinimizedWindow(tile);
+        _iconMinimized.Remove(hwnd);
+        _minimizedSourcePx.Remove(hwnd);
     }
 
     /// <summary>A window we have a minimized tile for was restored by something other than the dock
@@ -1779,10 +1819,7 @@ public partial class DockWindow : Window
         if (tile is null && !_iconMinimized.ContainsKey(hwnd))
             return; // not a window we're tracking
 
-        if (tile is not null)
-            ViewModel.RemoveMinimizedWindow(tile);
-        _iconMinimized.Remove(hwnd);
-        _minimizedSourcePx.Remove(hwnd);
+        DropMinimizedTracking(hwnd, tile);
     }
 
     /// <summary>On exit, un-minimizes every window the dock had minimized (tile or into-icon) so the user
@@ -1826,8 +1863,7 @@ public partial class DockWindow : Window
     /// process makes the next window's taskbar button flash instead of focusing.</param>
     private void MinimizeOneAnimated(IntPtr hwnd, Action? onDone, bool raiseIfNeeded = true, bool focusNext = true)
     {
-        if (ViewModel is null || _busy.Contains(hwnd) || ViewModel.FindMinimizedWindow(hwnd) is not null
-            || _iconMinimized.ContainsKey(hwnd))
+        if (ViewModel is null || _busy.Contains(hwnd) || IsWindowRepresented(hwnd))
         {
             onDone?.Invoke();
             return;
@@ -1913,7 +1949,7 @@ public partial class DockWindow : Window
         var hwnd = windows[index];
         void Next() => MinimizeListSequential(windows, index + 1, raiseEach);
         if (!WindowControl.IsWindow(hwnd) || WindowControl.IsIconic(hwnd) || _busy.Contains(hwnd)
-            || ViewModel.FindMinimizedWindow(hwnd) is not null || _iconMinimized.ContainsKey(hwnd))
+            || IsWindowRepresented(hwnd))
         {
             Next();
             return;
@@ -1932,18 +1968,7 @@ public partial class DockWindow : Window
             queue.Add((tile.Hwnd, tile, tile.Icon as BitmapSource));
         foreach (var kv in _iconMinimized.ToArray())
             queue.Add((kv.Key, null, kv.Value));
-        RestoreAllNext(queue, 0);
-    }
-
-    private void RestoreAllNext(List<(IntPtr Hwnd, DockItemViewModel? Tile, BitmapSource? Bitmap)> queue, int index)
-    {
-        if (index >= queue.Count)
-            return;
-        var (hwnd, tile, bitmap) = queue[index];
-        Point target = tile is not null
-            ? TileScreenCenter(tile)
-            : (ViewModel?.FindAppForWindow(hwnd) is { } app ? TileScreenCenter(app) : new Point(0, 0));
-        RestoreWindowAnimated(hwnd, tile, target, bitmap, () => RestoreAllNext(queue, index + 1));
+        RestoreQueueNext(queue, 0, null);
     }
 
     /// <summary>Warps a just-minimized window's <paramref name="capture"/> into its app icon (when
@@ -1954,8 +1979,7 @@ public partial class DockWindow : Window
     private void MinimizeToDock(IntPtr hwnd, WindowCapture.Result? capture, bool windowStillVisible = false,
         Action? onDone = null, bool focusNext = true)
     {
-        if (ViewModel is null || _busy.Contains(hwnd) || ViewModel.FindMinimizedWindow(hwnd) is not null
-            || _iconMinimized.ContainsKey(hwnd))
+        if (ViewModel is null || _busy.Contains(hwnd) || IsWindowRepresented(hwnd))
         {
             onDone?.Invoke();
             return;
@@ -2064,8 +2088,7 @@ public partial class DockWindow : Window
             var hwnd = w.Hwnd;
             if (!WindowControl.IsIconic(hwnd))
                 continue; // only windows that are already minimized
-            if (_busy.Contains(hwnd) || ViewModel.FindMinimizedWindow(hwnd) is not null
-                || _iconMinimized.ContainsKey(hwnd))
+            if (_busy.Contains(hwnd) || IsWindowRepresented(hwnd))
                 continue; // already represented
 
             // A later restore should play our warp, not the OS animation (as for windows we minimize).
@@ -2152,10 +2175,7 @@ public partial class DockWindow : Window
         if (!WindowControl.IsWindow(hwnd))
         {
             // Window is gone; drop any stale tile / tracking and move on.
-            if (tile is not null)
-                ViewModel.RemoveMinimizedWindow(tile);
-            _iconMinimized.Remove(hwnd);
-            _minimizedSourcePx.Remove(hwnd);
+            DropMinimizedTracking(hwnd, tile);
             onDone();
             return;
         }
@@ -2163,10 +2183,7 @@ public partial class DockWindow : Window
         if (bitmap is null)
         {
             WindowControl.Restore(hwnd);
-            if (tile is not null)
-                ViewModel.RemoveMinimizedWindow(tile);
-            _iconMinimized.Remove(hwnd);
-            _minimizedSourcePx.Remove(hwnd);
+            DropMinimizedTracking(hwnd, tile);
             onDone();
             return;
         }
@@ -2189,10 +2206,7 @@ public partial class DockWindow : Window
         restoreAnimator.Play(bitmap, windowDip, target, monitorDip, reverse: true, onCompleted: () =>
         {
             WindowControl.Restore(hwnd);
-            if (tile is not null)
-                ViewModel.RemoveMinimizedWindow(tile);
-            _iconMinimized.Remove(hwnd);
-            _minimizedSourcePx.Remove(hwnd);
+            DropMinimizedTracking(hwnd, tile);
             _busy.Remove(hwnd);
             onDone();
         });
@@ -2363,9 +2377,16 @@ public partial class DockWindow : Window
             return;
         }
 
-        if (sender is not FrameworkElement { DataContext: DockItemViewModel item })
+        if (sender is not FrameworkElement { DataContext: DockItemViewModel item } target)
             return;
 
+        ActivateItem(item, target);
+    }
+
+    /// <summary>Performs an item's click action — also the UIA Invoke entry point
+    /// (Accessibility/DockItemElement). <paramref name="anchor"/> places the folder List menu.</summary>
+    internal void ActivateItem(DockItemViewModel item, FrameworkElement? anchor)
+    {
         if (item.IsMinimizedWindow)
             RestoreMinimized(item);
         else if (item.IsTaskbarApp)
@@ -2373,7 +2394,7 @@ public partial class DockWindow : Window
         else if (item.IsStartMenu)
             OpenStartMenu();
         else if (item.IsPinnedFolder && item.PathModel?.ViewContentAs == FolderViewContentAs.List)
-            OpenFolderListMenu(item, sender as FrameworkElement);
+            OpenFolderListMenu(item, anchor);
         else if (item.IsPinnedFolder && item.PathModel is not null)
             ToggleFolderFan(item); // fan/grid flyout (Automatic picks by count)
         else
@@ -2481,29 +2502,21 @@ public partial class DockWindow : Window
     private ContextMenu BuildSeparatorMenu()
     {
         var menu = new ContextMenu();
-        var taskManager = new MenuItem { Header = Loc.T("Menu_TaskManager") };
-        taskManager.Click += (_, _) => ShortcutService.Launch("taskmgr.exe");
-        menu.Items.Add(taskManager);
+        MenuBuilder.AddItem(menu, Loc.T("Menu_TaskManager"), () => ShortcutService.Launch("taskmgr.exe"));
         menu.Items.Add(new Separator());
 
         var s = ViewModel!.Settings;
 
         // Turn Hiding On/Off — flips the AutoHideDock setting (mirrors the Preferences toggle).
-        var hiding = new MenuItem { Header = Loc.T(s.AutoHideDock ? "Menu_TurnHidingOff" : "Menu_TurnHidingOn") };
-        hiding.Click += (_, _) =>
+        MenuBuilder.AddItem(menu, Loc.T(s.AutoHideDock ? "Menu_TurnHidingOff" : "Menu_TurnHidingOn"), () =>
         {
             ViewModel!.Settings.AutoHideDock = !ViewModel.Settings.AutoHideDock;
             ViewModel.Save();
             ApplyAutoHide();
             _settingsWindow?.SyncFromSettings();
-        };
-        menu.Items.Add(hiding);
+        });
 
-        var magnification = new MenuItem
-        {
-            Header = Loc.T(s.MagnificationEnabled ? "Menu_TurnMagnificationOff" : "Menu_TurnMagnificationOn"),
-        };
-        magnification.Click += (_, _) =>
+        MenuBuilder.AddItem(menu, Loc.T(s.MagnificationEnabled ? "Menu_TurnMagnificationOff" : "Menu_TurnMagnificationOn"), () =>
         {
             var settings = ViewModel!.Settings;
             settings.MagnificationEnabled = !settings.MagnificationEnabled;
@@ -2513,8 +2526,7 @@ public partial class DockWindow : Window
             ViewModel.RecomputeLayout();
             ViewModel.Save();
             _settingsWindow?.SyncFromSettings();
-        };
-        menu.Items.Add(magnification);
+        });
 
         var position = new MenuItem { Header = Loc.T("Menu_PositionOnScreen") };
         position.Items.Add(MenuChoice("Position_Left", s.Edge == DockEdge.Left, () => PickEdge(DockEdge.Left)));
@@ -2529,16 +2541,10 @@ public partial class DockWindow : Window
         menu.Items.Add(minimizeUsing);
 
         menu.Items.Add(new Separator());
-        var prefs = new MenuItem { Header = Loc.T("Menu_DockPreferences") };
-        prefs.Click += (_, _) => OpenDockPreferences();
-        menu.Items.Add(prefs);
-        var about = new MenuItem { Header = Loc.T("Menu_AboutDockable") };
-        about.Click += (_, _) => OpenAbout();
-        menu.Items.Add(about);
+        MenuBuilder.AddItem(menu, Loc.T("Menu_DockPreferences"), () => OpenDockPreferences());
+        MenuBuilder.AddItem(menu, Loc.T("Menu_AboutDockable"), OpenAbout);
         menu.Items.Add(new Separator());
-        var exit = new MenuItem { Header = Loc.T("Menu_QuitDockable") };
-        exit.Click += (_, _) => Application.Current.Shutdown();
-        menu.Items.Add(exit);
+        MenuBuilder.AddItem(menu, Loc.T("Menu_QuitDockable"), () => Application.Current.Shutdown());
         return menu;
     }
 
@@ -2565,23 +2571,20 @@ public partial class DockWindow : Window
     {
         var menu = new ContextMenu();
 
-        var keep = new MenuItem { Header = Loc.T("Menu_KeepInDock"), IsCheckable = true, IsChecked = app.IsPinned };
-        keep.Click += (_, _) =>
+        MenuBuilder.AddCheckable(menu, Loc.T("Menu_KeepInDock"), app.IsPinned, () =>
         {
             if (app.IsPinned)
                 ViewModel!.UnpinApp(DockItem.PreferencesLaunchPath);
             else
                 ViewModel!.PinApp(DockItem.PreferencesLaunchPath, int.MaxValue);
             RefreshTaskbarApps();
-        };
-        menu.Items.Add(keep);
+        });
 
         if (_settingsWindow is not null)
         {
             menu.Items.Add(new Separator());
-            var quit = new MenuItem { Header = Loc.T("Menu_Quit") };
-            quit.Click += (_, _) => _settingsWindow?.Close(); // closes Preferences only; the dock keeps running
-            menu.Items.Add(quit);
+            // Closes Preferences only; the dock keeps running.
+            MenuBuilder.AddItem(menu, Loc.T("Menu_Quit"), () => _settingsWindow?.Close());
         }
 
         return menu;
@@ -2608,15 +2611,8 @@ public partial class DockWindow : Window
     private MenuItem BuildPathOptions(DockItemViewModel item)
     {
         var options = new MenuItem { Header = Loc.T("Menu_Options") };
-
-        var remove = new MenuItem { Header = Loc.T("Menu_RemoveFromDock") };
-        remove.Click += (_, _) => ViewModel?.UnpinPath(item);
-        options.Items.Add(remove);
-
-        var reveal = new MenuItem { Header = Loc.T("Menu_ShowInFileExplorer") };
-        reveal.Click += (_, _) => ShortcutService.RevealInExplorer(item.Model.TargetPath);
-        options.Items.Add(reveal);
-
+        MenuBuilder.AddItem(options, Loc.T("Menu_RemoveFromDock"), () => ViewModel?.UnpinPath(item));
+        MenuBuilder.AddItem(options, Loc.T("Menu_ShowInFileExplorer"), () => ShortcutService.RevealInExplorer(item.Model.TargetPath));
         return options;
     }
 
@@ -3078,13 +3074,15 @@ public partial class DockWindow : Window
         };
         pill.SetResourceReference(Border.BorderBrushProperty, "LabelBorderBrush");
 
-        var row = new StackPanel
+        // InvokableRow = a StackPanel with a UIA peer, so screen readers can read + invoke the row.
+        var row = new InvokableRow
         {
             Orientation = Orientation.Horizontal,
             Height = FanIconSize,
             Cursor = Cursors.Hand,
             Background = Brushes.Transparent, // hit-testable across the whole row
         };
+        AutomationProperties.SetName(row, label);
         row.Children.Add(pill); // label to the LEFT of the icon
         row.Children.Add(icon);
         row.MouseLeftButtonUp += (_, _) =>
@@ -3122,6 +3120,27 @@ public partial class DockWindow : Window
     private static async Task LoadFanIconAsync(Image image, string path, int pixelSize)
         => image.Source = await ShortcutService.LoadIconAsync(path, pixelSize);
 
+    /// <summary>The shortcut arrow (↗: shaft + open head) shared by the fan/grid tail discs,
+    /// uniform-scaled into ~30% of the disc and themed via LabelTextBrush.</summary>
+    private static ShapePath BuildTailArrow(double boxSize, double strokeThickness)
+    {
+        var arrow = new ShapePath
+        {
+            Data = Geometry.Parse("M 0,12 L 12,0 M 3.5,0 H 12 V 8.5"),
+            Stretch = Stretch.Uniform,
+            Width = boxSize * 0.3,
+            Height = boxSize * 0.3,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            StrokeThickness = strokeThickness,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            StrokeLineJoin = PenLineJoin.Round,
+        };
+        arrow.SetResourceReference(ShapePath.StrokeProperty, "LabelTextBrush");
+        return arrow;
+    }
+
     /// <summary>The fan tail's disc: a semi-transparent circle with a shortcut arrow (↗), both
     /// following the light/dark/auto theme (the label brushes, resolved per fan open).</summary>
     private UIElement BuildFanTailIcon()
@@ -3133,26 +3152,9 @@ public partial class DockWindow : Window
         };
         disc.SetResourceReference(Ellipse.StrokeProperty, "LabelBorderBrush");
 
-        var arrow = new ShapePath
-        {
-            // An up-right arrow (shaft + open head), uniform-scaled into ~30% of the disc so it
-            // tracks FanIconSize.
-            Data = Geometry.Parse("M 0,12 L 12,0 M 3.5,0 H 12 V 8.5"),
-            Stretch = Stretch.Uniform,
-            Width = FanIconSize * 0.3,
-            Height = FanIconSize * 0.3,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            StrokeThickness = 3,
-            StrokeStartLineCap = PenLineCap.Round,
-            StrokeEndLineCap = PenLineCap.Round,
-            StrokeLineJoin = PenLineJoin.Round,
-        };
-        arrow.SetResourceReference(ShapePath.StrokeProperty, "LabelTextBrush");
-
         var grid = new Grid { Width = FanIconSize, Height = FanIconSize };
         grid.Children.Add(disc);
-        grid.Children.Add(arrow);
+        grid.Children.Add(BuildTailArrow(FanIconSize, 3));
         return grid;
     }
 
@@ -3278,7 +3280,9 @@ public partial class DockWindow : Window
         };
         text.SetResourceReference(TextBlock.ForegroundProperty, "LabelTextBrush");
 
-        var cell = new StackPanel { Cursor = Cursors.Hand, Background = Brushes.Transparent };
+        // InvokableRow = a StackPanel with a UIA peer, so screen readers can read + invoke the cell.
+        var cell = new InvokableRow { Cursor = Cursors.Hand, Background = Brushes.Transparent };
+        AutomationProperties.SetName(cell, label);
         cell.Children.Add(icon);
         cell.Children.Add(text);
         cell.MouseLeftButtonUp += (_, _) =>
@@ -3343,9 +3347,7 @@ public partial class DockWindow : Window
         AddFolderConfigSections(options, item, pin);
         menu.Items.Add(options);
 
-        var open = new MenuItem { Header = Loc.T("Fan_OpenInExplorer") };
-        open.Click += (_, _) => ShortcutService.Launch(pin.Path);
-        menu.Items.Add(open);
+        MenuBuilder.AddItem(menu, Loc.T("Fan_OpenInExplorer"), () => ShortcutService.Launch(pin.Path));
 
         menu.PlacementTarget = placementTarget ?? this;
         menu.Placement = PlacementMode.Top;
@@ -3365,24 +3367,9 @@ public partial class DockWindow : Window
         };
         disc.SetResourceReference(Ellipse.StrokeProperty, "LabelTextBrush");
 
-        var arrow = new ShapePath
-        {
-            Data = Geometry.Parse("M 0,12 L 12,0 M 3.5,0 H 12 V 8.5"),
-            Stretch = Stretch.Uniform,
-            Width = GridIconSize * 0.3,
-            Height = GridIconSize * 0.3,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            StrokeThickness = 5,
-            StrokeStartLineCap = PenLineCap.Round,
-            StrokeEndLineCap = PenLineCap.Round,
-            StrokeLineJoin = PenLineJoin.Round,
-        };
-        arrow.SetResourceReference(ShapePath.StrokeProperty, "LabelTextBrush");
-
         var grid = new Grid { Width = GridIconSize, Height = GridIconSize, HorizontalAlignment = HorizontalAlignment.Center };
         grid.Children.Add(disc);
-        grid.Children.Add(arrow);
+        grid.Children.Add(BuildTailArrow(GridIconSize, 5));
         return grid;
     }
 
@@ -3393,48 +3380,36 @@ public partial class DockWindow : Window
         var menu = new ContextMenu();
 
         // New Window: launch another instance of the app (most apps open a fresh window).
-        var newWindow = new MenuItem { Header = Loc.T("Menu_NewWindow") };
-        newWindow.Click += (_, _) => ShortcutService.Launch(app.LaunchPath);
-        menu.Items.Add(newWindow);
+        MenuBuilder.AddItem(menu, Loc.T("Menu_NewWindow"), () => ShortcutService.Launch(app.LaunchPath));
 
         // Rename: change a pinned shortcut's display label (persisted via PinNames).
         if (app.IsPinned)
-        {
-            var rename = new MenuItem { Header = Loc.T("Menu_Rename") };
-            rename.Click += (_, _) => RenamePin(app);
-            menu.Items.Add(rename);
-        }
+            MenuBuilder.AddItem(menu, Loc.T("Menu_Rename"), () => RenamePin(app));
 
         menu.Items.Add(new Separator());
 
         var options = new MenuItem { Header = Loc.T("Menu_Options") };
 
-        var keep = new MenuItem { Header = Loc.T("Menu_KeepInDock"), IsCheckable = true, IsChecked = app.IsPinned };
-        keep.Click += (_, _) =>
+        MenuBuilder.AddCheckable(options, Loc.T("Menu_KeepInDock"), app.IsPinned, () =>
         {
             if (app.IsPinned)
                 ViewModel!.UnpinApp(app.LaunchPath);
             else
                 ViewModel!.PinApp(app.LaunchPath, int.MaxValue, app.DisplayName); // append to the pinned list (keep its name)
             RefreshTaskbarApps();
-        };
-        options.Items.Add(keep);
+        });
 
         string exe = ResolveExecutable(app);
         string startupName = StartupEntryName(app, exe);
-        var login = new MenuItem { Header = Loc.T("Menu_OpenAtLogin"), IsCheckable = true, IsChecked = StartupManager.IsEnabled(startupName) };
-        login.Click += (_, _) =>
+        MenuBuilder.AddCheckable(options, Loc.T("Menu_OpenAtLogin"), StartupManager.IsEnabled(startupName), () =>
         {
             if (StartupManager.IsEnabled(startupName))
                 StartupManager.Disable(startupName);
             else
                 StartupManager.Enable(startupName, exe);
-        };
-        options.Items.Add(login);
+        });
 
-        var reveal = new MenuItem { Header = Loc.T("Menu_ShowInExplorer") };
-        reveal.Click += (_, _) => ShortcutService.RevealInExplorer(app.LaunchPath);
-        options.Items.Add(reveal);
+        MenuBuilder.AddItem(options, Loc.T("Menu_ShowInExplorer"), () => ShortcutService.RevealInExplorer(app.LaunchPath));
 
         menu.Items.Add(options);
 
@@ -3443,9 +3418,7 @@ public partial class DockWindow : Window
         {
             menu.Items.Add(new Separator());
 
-            var showAll = new MenuItem { Header = Loc.T("Menu_ShowAllWindows") };
-            showAll.Click += (_, _) => ActivateOrLaunch(app);
-            menu.Items.Add(showAll);
+            MenuBuilder.AddItem(menu, Loc.T("Menu_ShowAllWindows"), () => ActivateOrLaunch(app));
 
             var quit = new MenuItem();
             SetQuitHeader(quit, AltHeld);
@@ -3578,11 +3551,7 @@ public partial class DockWindow : Window
     {
         if (hwnd == IntPtr.Zero)
             return;
-        _iconMinimized.Remove(hwnd);
-        _minimizedSourcePx.Remove(hwnd);
-        var tile = ViewModel?.FindMinimizedWindow(hwnd);
-        if (tile is not null)
-            ViewModel!.RemoveMinimizedWindow(tile);
+        DropMinimizedTracking(hwnd, ViewModel?.FindMinimizedWindow(hwnd));
     }
 
     // The dock's own Preferences window lives in our process, so the global minimize hook (which skips
@@ -3750,8 +3719,9 @@ public partial class DockWindow : Window
         _trayIcon = new TaskbarIcon
         {
             ToolTipText = "Dockable",
-            // The app icon (a URI-backed resource, which H.NotifyIcon accepts) renders the tray glyph.
-            IconSource = AppIcon.Large,
+            // The multi-size .ico (a URI-backed resource, which H.NotifyIcon accepts) renders the
+            // tray glyph — its 16/32px frames stay crisp at notification-area size.
+            IconSource = AppIcon.Tray,
             // Left and right click both open the menu; there's no separate click action.
             MenuActivation = H.NotifyIcon.Core.PopupActivationMode.LeftOrRightClick,
         };
