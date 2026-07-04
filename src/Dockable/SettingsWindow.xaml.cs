@@ -184,8 +184,27 @@ public partial class SettingsWindow : Window
             return;
         }
 
+        // Group results under their panel (ordered by each panel's best-ranked match). The panel
+        // header always shows — even when the panel name itself didn't match — with the nav icon;
+        // clicking it just opens the panel. Panel-only entries (Row == null) merely create a group.
+        var panelOrder = new List<string>();
+        var byPanel = new Dictionary<string, List<SettingEntry>>();
         foreach (var entry in FindSettings(query))
-            SearchResults.Children.Add(BuildSearchResultRow(entry));
+        {
+            if (!byPanel.TryGetValue(entry.Panel, out var rows))
+            {
+                byPanel[entry.Panel] = rows = new List<SettingEntry>();
+                panelOrder.Add(entry.Panel);
+            }
+            if (entry.Row is not null)
+                rows.Add(entry);
+        }
+        foreach (string panel in panelOrder)
+        {
+            SearchResults.Children.Add(BuildSearchGroupHeader(panel));
+            foreach (var entry in byPanel[panel])
+                SearchResults.Children.Add(BuildSearchResultRow(entry));
+        }
         SearchResults.Visibility = Visibility.Visible;
         NavList.Visibility = Visibility.Collapsed;
     }
@@ -215,19 +234,104 @@ public partial class SettingsWindow : Window
         _ => "Nav_General",
     };
 
-    private FrameworkElement BuildSearchResultRow(SettingEntry entry)
+    /// <summary>The clickable panel group header atop each result group: the panel's nav icon +
+    /// name. Clicking opens the panel with no row emphasis.</summary>
+    private FrameworkElement BuildSearchGroupHeader(string panel)
     {
-        var text = new StackPanel();
-        text.Children.Add(new TextBlock { Text = Loc.T(entry.NameKey), FontSize = 13, Foreground = ResultNameBrush, TextTrimming = TextTrimming.CharacterEllipsis });
-        text.Children.Add(new TextBlock { Text = Loc.T(PanelNameKey(entry.Panel)), FontSize = 11, Foreground = ResultPanelBrush });
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        content.Children.Add(PanelBadge(panel));
+        content.Children.Add(new TextBlock
+        {
+            Text = Loc.T(PanelNameKey(panel)),
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = ResultNameBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(6, 0, 0, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
 
         var row = new Border
         {
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(8, 5, 8, 5),
+            Margin = new Thickness(0, SearchResults.Children.Count == 0 ? 0 : 6, 0, 0),
             Background = Brushes.Transparent,
             Cursor = Cursors.Hand,
-            Child = text,
+            Child = content,
+        };
+        row.MouseEnter += (_, _) => row.Background = ResultHoverBrush;
+        row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
+        row.MouseLeftButtonUp += (_, _) => ShowSection(panel);
+        return row;
+    }
+
+    /// <summary>A small replica of the panel's sidebar nav icon (same glyph + background).</summary>
+    private static Border PanelBadge(string panel)
+    {
+        Brush background = panel switch
+        {
+            "DockMenuBar" => FrozenBrush("#0A84FF"),
+            "About" => FrozenBrush("#1D1D1F"),
+            // Liquid-glass sheen — mirrors the nav tile's radial gradient.
+            "LiquidGlass" => new RadialGradientBrush
+            {
+                GradientOrigin = new Point(0.3, 0.25),
+                Center = new Point(0.5, 0.5),
+                RadiusX = 0.95,
+                RadiusY = 0.95,
+                GradientStops =
+                {
+                    new GradientStop((Color)ColorConverter.ConvertFromString("#FF6FB1"), 0),
+                    new GradientStop((Color)ColorConverter.ConvertFromString("#FF3B30"), 0.35),
+                    new GradientStop((Color)ColorConverter.ConvertFromString("#0A84FF"), 0.72),
+                    new GradientStop((Color)ColorConverter.ConvertFromString("#FFD60A"), 1),
+                },
+            },
+            _ => FrozenBrush("#8E8E93"), // General
+        };
+        string glyph = panel switch
+        {
+            "DockMenuBar" => "",
+            "LiquidGlass" => "",
+            "About" => "",
+            _ => "",
+        };
+        return new Border
+        {
+            Width = 20,
+            Height = 20,
+            CornerRadius = new CornerRadius(5),
+            Background = background,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = glyph,
+                FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
+                FontSize = 10,
+                Foreground = Brushes.White,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
+    }
+
+    private FrameworkElement BuildSearchResultRow(SettingEntry entry)
+    {
+        var row = new Border
+        {
+            CornerRadius = new CornerRadius(6),
+            // Left padding aligns the name under the group header's label (badge 20 + 6 gap).
+            Padding = new Thickness(34, 5, 8, 5),
+            Background = Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            Child = new TextBlock
+            {
+                Text = Loc.T(entry.NameKey),
+                FontSize = 13,
+                Foreground = ResultNameBrush,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            },
         };
         row.MouseEnter += (_, _) => row.Background = ResultHoverBrush;
         row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
@@ -265,9 +369,10 @@ public partial class SettingsWindow : Window
         return null;
     }
 
-    /// <summary>The Appearance tiles' horizontal strip (the Light/Dark/Auto row).</summary>
+    /// <summary>The Appearance tiles' white card (the rounded Border holding the Light/Dark/Auto
+    /// strip) — pulsing the card keeps the emphasis on a rounded surface.</summary>
     private FrameworkElement? AppearanceTiles()
-        => (LightSel.Parent as FrameworkElement)?.Parent as FrameworkElement;
+        => ((LightSel.Parent as FrameworkElement)?.Parent as FrameworkElement)?.Parent as FrameworkElement;
 
     /// <summary>Row resolver for the Liquid Glass tuning sliders: they sit behind the one-way
     /// "Advanced" reveal, so expand it first, then locate the row like any other setting.</summary>
@@ -279,9 +384,41 @@ public partial class SettingsWindow : Window
         return RowOf(control);
     }
 
-    /// <summary>Pulses a row with the accent tint, then fades back to whatever was there.</summary>
+    /// <summary>Pulses a row with the accent tint, then fades back to whatever was there. Grid rows
+    /// get a rounded overlay behind their content (extends a little past it, inset a hair from the
+    /// neighbouring rows) so the emphasis isn't a square edge-to-edge fill.</summary>
     private static void PulseSettingRow(FrameworkElement row)
     {
+        var pulse = new SolidColorBrush(Color.FromArgb(0x46, 0x0A, 0x84, 0xFF));
+        var fade = new ColorAnimation
+        {
+            Duration = TimeSpan.FromMilliseconds(1500),
+            BeginTime = TimeSpan.FromMilliseconds(600),
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn },
+        };
+
+        if (row is Grid grid)
+        {
+            var overlay = new Border
+            {
+                CornerRadius = new CornerRadius(8),
+                // Negative sides = padding around the row content; small top/bottom = margin
+                // from the adjacent rows/dividers. Grids don't clip, so the sides render fine.
+                Margin = new Thickness(-10, 3, -10, 3),
+                Background = pulse,
+                IsHitTestVisible = false,
+            };
+            if (grid.ColumnDefinitions.Count > 1) Grid.SetColumnSpan(overlay, grid.ColumnDefinitions.Count);
+            if (grid.RowDefinitions.Count > 1) Grid.SetRowSpan(overlay, grid.RowDefinitions.Count);
+            grid.Children.Insert(0, overlay); // index 0 = behind the row's content
+            fade.To = Colors.Transparent;
+            fade.Completed += (_, _) => grid.Children.Remove(overlay);
+            pulse.BeginAnimation(SolidColorBrush.ColorProperty, fade);
+            return;
+        }
+
+        // Non-Grid targets (e.g. the Appearance card Border) carry their own rounded surface —
+        // pulse the background in place and fade back to it.
         Brush? original;
         Action<Brush?> setBackground;
         switch (row)
@@ -290,21 +427,14 @@ public partial class SettingsWindow : Window
             case Border border: original = border.Background; setBackground = b => border.Background = b; break;
             default: return;
         }
-
-        Color restingColor = (original as SolidColorBrush)?.Color ?? Colors.Transparent;
-        var pulse = new SolidColorBrush(Color.FromArgb(0x46, 0x0A, 0x84, 0xFF));
         setBackground(pulse);
-        var fade = new ColorAnimation(restingColor, TimeSpan.FromMilliseconds(1500))
-        {
-            BeginTime = TimeSpan.FromMilliseconds(600),
-            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn },
-        };
+        fade.To = (original as SolidColorBrush)?.Color ?? Colors.Transparent;
         fade.Completed += (_, _) => setBackground(original);
         pulse.BeginAnimation(SolidColorBrush.ColorProperty, fade);
     }
 
     /// <summary>Shows the page for <paramref name="id"/> (General / DockMenuBar / LiquidGlass / About)
-    /// and highlights its sidebar row (accent fill + white label), like macOS System Settings.</summary>
+    /// and highlights its sidebar row with a light-gray fill.</summary>
     private void ShowSection(string id)
     {
         PageGeneral.Visibility = id == "General" ? Visibility.Visible : Visibility.Collapsed;
@@ -320,11 +450,12 @@ public partial class SettingsWindow : Window
 
     private static void SetNavSelected(System.Windows.Controls.Border row, TextBlock label, bool selected)
     {
-        row.Background = selected ? RingBrush : Brushes.Transparent;
-        label.Foreground = selected ? Brushes.White : NavTextBrush;
+        row.Background = selected ? NavSelectedBrush : Brushes.Transparent;
+        label.Foreground = NavTextBrush;
     }
 
     private static readonly Brush NavTextBrush = FrozenBrush("#1D1D1F");
+    private static readonly Brush NavSelectedBrush = FrozenBrush("#1C000000"); // light gray over the sidebar
 
     // ResizeMode=CanResize adds a maximize box; remove it so the window can't jump to a corner — its
     // size is already capped to its content and the viewport.

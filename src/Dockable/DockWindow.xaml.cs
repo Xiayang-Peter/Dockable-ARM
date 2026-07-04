@@ -3750,105 +3750,23 @@ public partial class DockWindow : Window
         _trayIcon = new TaskbarIcon
         {
             ToolTipText = "Dockable",
-            ContextMenu = BuildTrayMenu(),
             // The app icon (a URI-backed resource, which H.NotifyIcon accepts) renders the tray glyph.
-            IconSource = AppIcon.Tray,
+            IconSource = AppIcon.Large,
+            // Left and right click both open the menu; there's no separate click action.
+            MenuActivation = H.NotifyIcon.Core.PopupActivationMode.LeftOrRightClick,
         };
-        _trayIcon.TrayLeftMouseUp += (_, _) => ToggleVisibility();
+        // The tray shows the same dock-wide menu as the dock's empty-space / separator right-click.
+        // That menu bakes labels + check state at build time, so rebuild it fresh on the button-down
+        // of the press that's about to open it (H.NotifyIcon shows the assigned menu on button-up).
+        _trayIcon.TrayLeftMouseDown += (_, _) => RefreshTrayMenu();
+        _trayIcon.TrayRightMouseDown += (_, _) => RefreshTrayMenu();
         _trayIcon.ForceCreate();
-
-        // The tray menu is built once (its labels are baked in), so rebuild it on a language change.
-        Loc.LanguageChanged += OnLanguageChanged;
     }
 
-    private void OnLanguageChanged(object? sender, EventArgs e)
+    private void RefreshTrayMenu()
     {
-        if (_trayIcon is not null)
-            _trayIcon.ContextMenu = BuildTrayMenu();
-    }
-
-    private ContextMenu BuildTrayMenu()
-    {
-        var menu = new ContextMenu();
-
-        var toggle = new MenuItem { Header = Loc.T("Tray_ShowHideDock") };
-        toggle.Click += (_, _) => ToggleVisibility();
-        menu.Items.Add(toggle);
-
-        // Windows taskbar submenu: Always / Auto / Never (radio-style checks).
-        var taskbarItem = new MenuItem { Header = Loc.T("Tray_Taskbar") };
-        var tbAlways = new MenuItem { Header = Loc.T("Taskbar_Always"), IsCheckable = true };
-        var tbAuto = new MenuItem { Header = Loc.T("Taskbar_Auto"), IsCheckable = true };
-        var tbNever = new MenuItem { Header = Loc.T("Taskbar_Never"), IsCheckable = true };
-        tbAlways.Click += (_, _) => SetTaskbarVisibility(TaskbarVisibility.Always);
-        tbAuto.Click += (_, _) => SetTaskbarVisibility(TaskbarVisibility.Auto);
-        tbNever.Click += (_, _) => SetTaskbarVisibility(TaskbarVisibility.Never);
-        taskbarItem.Items.Add(tbAlways);
-        taskbarItem.Items.Add(tbAuto);
-        taskbarItem.Items.Add(tbNever);
-        menu.Items.Add(taskbarItem);
-
-        var menuBarItem = new MenuItem { Header = Loc.T("Toggle_ShowMenuBar"), IsCheckable = true };
-        menuBarItem.Click += (_, _) => SetShowMenuBar(menuBarItem.IsChecked);
-        menu.Items.Add(menuBarItem);
-
-        // Theme submenu: Light / Dark / Auto (radio-style checks). "Auto" == DockTheme.System.
-        var themeItem = new MenuItem { Header = Loc.T("Tray_Theme") };
-        var themeLight = new MenuItem { Header = Loc.T("Theme_Light"), IsCheckable = true };
-        var themeDark = new MenuItem { Header = Loc.T("Theme_Dark"), IsCheckable = true };
-        var themeAuto = new MenuItem { Header = Loc.T("Theme_Auto"), IsCheckable = true };
-        themeLight.Click += (_, _) => SetTheme(DockTheme.Light);
-        themeDark.Click += (_, _) => SetTheme(DockTheme.Dark);
-        themeAuto.Click += (_, _) => SetTheme(DockTheme.System);
-        themeItem.Items.Add(themeLight);
-        themeItem.Items.Add(themeDark);
-        themeItem.Items.Add(themeAuto);
-        menu.Items.Add(themeItem);
-
-        var prefsItem = new MenuItem { Header = Loc.T("Menu_DockPreferences") };
-        prefsItem.Click += (_, _) => OpenDockPreferences();
-        menu.Items.Add(prefsItem);
-
-        var aboutItem = new MenuItem { Header = Loc.T("Menu_AboutDockable") };
-        aboutItem.Click += (_, _) => OpenAbout();
-        menu.Items.Add(aboutItem);
-
-        // Reflect current settings whenever the menu opens.
-        menu.Opened += (_, _) =>
-        {
-            var tv = ViewModel?.Settings.TaskbarVisibility ?? TaskbarVisibility.Auto;
-            tbAlways.IsChecked = tv == TaskbarVisibility.Always;
-            tbAuto.IsChecked = tv == TaskbarVisibility.Auto;
-            tbNever.IsChecked = tv == TaskbarVisibility.Never;
-            menuBarItem.IsChecked = ViewModel?.Settings.ShowMenuBar ?? false;
-            var theme = ViewModel?.Settings.Theme ?? DockTheme.System;
-            themeLight.IsChecked = theme == DockTheme.Light;
-            themeDark.IsChecked = theme == DockTheme.Dark;
-            themeAuto.IsChecked = theme == DockTheme.System;
-        };
-
-        menu.Items.Add(new Separator());
-
-        var exit = new MenuItem { Header = Loc.T("Menu_Exit") };
-        exit.Click += (_, _) => Application.Current.Shutdown();
-        menu.Items.Add(exit);
-
-        return menu;
-    }
-
-    private void ToggleVisibility()
-    {
-        if (IsVisible)
-        {
-            Hide();
-            _acrylic.Hide();
-        }
-        else
-        {
-            Show();
-            PositionDock();
-            ApplyGlassEffect();
-        }
+        if (_trayIcon is not null && ViewModel is not null)
+            _trayIcon.ContextMenu = BuildSeparatorMenu();
     }
 
     protected override void OnClosed(EventArgs e)
@@ -3871,7 +3789,6 @@ public partial class DockWindow : Window
             PInvoke.DeregisterShellHookWindow((HWND)_hwnd);
         _appBar?.Unregister(); // release reserved screen space
         Taskbar.Restore(); // restore the taskbar to its pre-launch state
-        Loc.LanguageChanged -= OnLanguageChanged;
         _trayIcon?.Dispose();
         base.OnClosed(e);
     }
