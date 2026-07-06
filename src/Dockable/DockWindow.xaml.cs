@@ -93,11 +93,12 @@ public partial class DockWindow : Window
     private RefractionEffect? _glassRefractInner; // pass 1: rim refraction + chromatic aberration
     private RefractionEffect? _glassSpecEffect; // the final pass, whose rim specular tracks the cursor
     private double _glassSpecAmount = GlassSpecRestAmount; // eased activation (rest ↔ 1.0 on hover)
-    private double _glassLightUv;           // eased glint position (bar UV); rests at 0 (left end) when idle
-    // Rim-specular tuning: light sits this far above the bar (UV), and the glint eases between a
-    // visible resting sheen and a bright peak as the dock is hovered/magnified. The light's X overshoots
-    // the bar ends by GlassLightOvershoot (UV), so a pointer at the far end pushes the light diagonally
-    // past the corner and the glint wraps onto the dock's side edge instead of stopping at the top rim.
+    private double _glassLightUv;           // eased glint position (bar main-axis UV); rests at 0 (left/top end) when idle
+    // Rim-specular tuning: light sits this far off the bar's screen-centre side (UV) — above a bottom
+    // dock, beside a vertical one — and the glint eases between a visible resting sheen and a bright
+    // peak as the dock is hovered/magnified. The light's main-axis position overshoots the bar ends by
+    // GlassLightOvershoot (UV), so a pointer at the far end pushes the light diagonally past the corner
+    // and the glint wraps onto the dock's end edge instead of stopping at the long rim.
     private const double GlassLightHeight = -0.18;
     private const double GlassLightOvershoot = 0.5;
     private const double GlassSpecAmbient = 0.12;
@@ -937,7 +938,7 @@ public partial class DockWindow : Window
 
         // Pass 1 (inner): rim refraction + chromatic aberration + horizontal blur (saturation applied once, below).
         // The rounded-rect rim is computed analytically in the shader (aspect-correct), so corner/bezel
-        // are passed as fractions of the bar height — kept in sync with the live bar by UpdateGlassShape.
+        // are passed as fractions of the bar thickness — kept in sync with the live bar by UpdateGlassShape.
         _glassRefractInner = new RefractionEffect
         {
             DistortionAmount = s?.GlassDistortion ?? 34.0, // px the sample is pulled inward at the rim
@@ -959,8 +960,8 @@ public partial class DockWindow : Window
             RimSharpness = 4.0, // thin, border-like glint hugging the very edge
             SpecularIntensity = GlassSpecAmbient
                 + (_glassSpecPeak - GlassSpecAmbient) * GlassSpecRestAmount, // start at the resting sheen
-            // Resting spot with no pointer on the dock: the bar's left-most end.
-            LightPosition = new Point(-GlassLightOvershoot, GlassLightHeight),
+            // Resting spot with no pointer on the dock: the bar's left/top-most end.
+            LightPosition = GlassLightPos(-GlassLightOvershoot),
         };
         GlassRefractOuter.Effect = _glassSpecEffect;
         _glassRefractReady = true;
@@ -993,18 +994,21 @@ public partial class DockWindow : Window
     }
 
     /// <summary>Keeps the shader's rounded-rect corner/bezel matched to the live bar. They're expressed
-    /// as fractions of the bar height so the corners stay circular (and DPI-independent) at any width;
-    /// only changes when the bar's thickness changes (icon size), so the DP-equality guard makes the
+    /// as fractions of the bar's thickness — its short side, matching the shader's own reference — so
+    /// the corners stay circular (and DPI-independent) at any length and on either orientation; only
+    /// changes when the bar's thickness changes (icon size), so the DP-equality guard makes the
     /// per-frame call from the render loop free.</summary>
     private void UpdateGlassShape()
     {
         // Both effects exist only while Liquid Glass refraction is active — skip the math (this is
         // called per rendered frame) and don't allocate a temp array for the two fields.
-        if ((_glassRefractInner is null && _glassSpecEffect is null)
-            || ViewModel is null || ViewModel.BarHeight <= 0)
+        if ((_glassRefractInner is null && _glassSpecEffect is null) || ViewModel is null)
             return;
-        double cornerFrac = BarCornerRadius / ViewModel.BarHeight;
-        const double bezelFrac = 0.5; // rim band ≈ half the bar height
+        double thickness = Math.Min(ViewModel.BarWidth, ViewModel.BarHeight);
+        if (thickness <= 0)
+            return;
+        double cornerFrac = BarCornerRadius / thickness;
+        const double bezelFrac = 0.5; // rim band ≈ half the bar thickness
         if (_glassRefractInner is not null)
         {
             _glassRefractInner.CornerFraction = cornerFrac;
@@ -1083,23 +1087,39 @@ public partial class DockWindow : Window
         UpdateGlassClip();
     }
 
+    /// <summary>Maps the glint light's main-axis coordinate (bar UV, overshoot already applied) to the
+    /// shader's 2-D LightPosition for the current edge. The light always sits off the bar's
+    /// screen-centre side (above a bottom dock, right of a left dock, left of a right dock), so the
+    /// pointer-following glint renders on the rim nearest the centre of the screen and the shader's
+    /// point-reflected counter-glint lands diametrically opposite on the outer rim.</summary>
+    private Point GlassLightPos(double lightMain) => ViewModel?.Settings.Edge switch
+    {
+        DockEdge.Left => new Point(1.0 - GlassLightHeight, lightMain),
+        DockEdge.Right => new Point(GlassLightHeight, lightMain),
+        _ => new Point(lightMain, GlassLightHeight),
+    };
+
     /// <summary>
-    /// Drives the rim specular each render frame: anchors the (virtual) light above the cursor's X over
-    /// the bar so the bright glint sweeps along the rim as the pointer moves, and eases its intensity
-    /// between a faint resting sheen and a bright peak with hover (which also tracks magnification, since
-    /// the icons grow on hover). Only runs while Liquid Glass refraction is on screen.
+    /// Drives the rim specular each render frame: anchors the (virtual) light off the bar's
+    /// screen-centre side at the cursor's main-axis position so the bright glint sweeps along the rim
+    /// as the pointer moves, and eases its intensity between a faint resting sheen and a bright peak
+    /// with hover (which also tracks magnification, since the icons grow on hover). Only runs while
+    /// Liquid Glass refraction is on screen.
     /// </summary>
     private void UpdateGlassSpecular()
     {
         if (_glassSpecEffect is null || ViewModel is null
-            || GlassRefractOuter.Visibility != Visibility.Visible || ViewModel.BarWidth <= 0)
+            || GlassRefractOuter.Visibility != Visibility.Visible
+            || ViewModel.BarWidth <= 0 || ViewModel.BarHeight <= 0)
             return;
 
         // Follow the cursor directly while hovering; with no pointer on the dock, glide the glint
-        // back to its resting spot at the bar's left-most end.
+        // back to its resting spot at the bar's left/top-most end.
         if (_hovering)
         {
-            _glassLightUv = Math.Clamp((_mouseX - ViewModel.BarLeft) / ViewModel.BarWidth, 0.0, 1.0);
+            _glassLightUv = IsVerticalDock
+                ? Math.Clamp((_mouseY - ViewModel.BarTop) / ViewModel.BarHeight, 0.0, 1.0)
+                : Math.Clamp((_mouseX - ViewModel.BarLeft) / ViewModel.BarWidth, 0.0, 1.0);
         }
         else
         {
@@ -1108,8 +1128,8 @@ public partial class DockWindow : Window
                 _glassLightUv = 0.0; // snap once home so the settle test below can unhook the loop
         }
         // Map [0,1] → [-overshoot, 1+overshoot] (centre fixed) so the ends carry the light past the corner.
-        double lightX = _glassLightUv * (1.0 + 2.0 * GlassLightOvershoot) - GlassLightOvershoot;
-        _glassSpecEffect.LightPosition = new Point(lightX, GlassLightHeight);
+        double lightMain = _glassLightUv * (1.0 + 2.0 * GlassLightOvershoot) - GlassLightOvershoot;
+        _glassSpecEffect.LightPosition = GlassLightPos(lightMain);
 
         // The sheen dims from the hover peak to a still-visible resting level, never fully out.
         double target = _hovering ? 1.0 : GlassSpecRestAmount;
@@ -1120,8 +1140,8 @@ public partial class DockWindow : Window
             GlassSpecAmbient + (_glassSpecPeak - GlassSpecAmbient) * _glassSpecAmount;
     }
 
-    /// <summary>Whether the rim glint has finished gliding home (position at the left end, sheen down
-    /// to the resting level) — the render loop must stay hooked until then, or it freezes mid-return.</summary>
+    /// <summary>Whether the rim glint has finished gliding home (position at the left/top end, sheen
+    /// down to the resting level) — the render loop must stay hooked until then, or it freezes mid-return.</summary>
     private bool GlassSpecularSettled()
         => _glassSpecEffect is null || GlassRefractOuter.Visibility != Visibility.Visible
            || (_glassSpecAmount == GlassSpecRestAmount && _glassLightUv == 0.0);
@@ -1816,6 +1836,7 @@ public partial class DockWindow : Window
             return;
         ViewModel.ApplyEdge(edge); // persist, re-lay out, and notify edge-derived view bindings
         ApplyBehavior();           // move the AppBar reservation, reposition, and re-clip
+        UpdateGlassSpecular();     // re-anchor the rim glint to the new edge's screen-centre side
     }
 
     private void SetTaskbarVisibility(TaskbarVisibility mode)
@@ -2685,9 +2706,10 @@ public partial class DockWindow : Window
         });
 
         var position = new MenuItem { Header = Loc.T("Menu_PositionOnScreen") };
-        position.Items.Add(MenuChoice("Position_Left", s.Edge == DockEdge.Left, () => PickEdge(DockEdge.Left)));
         position.Items.Add(MenuChoice("Position_Bottom", s.Edge == DockEdge.Bottom, () => PickEdge(DockEdge.Bottom)));
+        position.Items.Add(MenuChoice("Position_Left", s.Edge == DockEdge.Left, () => PickEdge(DockEdge.Left)));
         position.Items.Add(MenuChoice("Position_Right", s.Edge == DockEdge.Right, () => PickEdge(DockEdge.Right)));
+        position.Items.Add(MenuChoice("Position_Top", s.Edge == DockEdge.Top, () => PickEdge(DockEdge.Top)));
         menu.Items.Add(position);
 
         var minimizeUsing = new MenuItem { Header = Loc.T("Menu_MinimizeUsing") };

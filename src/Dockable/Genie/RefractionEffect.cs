@@ -149,7 +149,7 @@ public sealed class RefractionEffect : ShaderEffect
 
     /// <summary>Rim specular highlight strength (0 = none). Additive white glint at the rim, brightest
     /// where the surface faces <see cref="LightPosition"/>, with a matching counter-glint lit from the
-    /// point-reflected position (1 - LightPosition) — the opposite rim at the horizontally mirrored X.
+    /// point-reflected position (1 - LightPosition) — the diametrically opposite rim spot.
     /// Set on the final pass only.</summary>
     public double SpecularIntensity
     {
@@ -172,15 +172,17 @@ public sealed class RefractionEffect : ShaderEffect
         set => SetValue(RimSharpnessProperty, value);
     }
 
-    /// <summary>Corner radius of the glass rounded-rect, as a fraction of the bar height (matches the
-    /// dock's own corner). Applied isotropically in pixels, so the corners stay circular at any width.</summary>
+    /// <summary>Corner radius of the glass rounded-rect, as a fraction of the bar's thickness — its
+    /// short side, height on a horizontal dock / width on a vertical one (matches the dock's own
+    /// corner). Applied isotropically in pixels, so the corners stay circular at any width.</summary>
     public double CornerFraction
     {
         get => (double)GetValue(CornerFractionProperty);
         set => SetValue(CornerFractionProperty, value);
     }
 
-    /// <summary>Width of the refracting rim band, as a fraction of the bar height (uniform all around).</summary>
+    /// <summary>Width of the refracting rim band, as a fraction of the bar's thickness (short side),
+    /// uniform all around.</summary>
     public double BezelFraction
     {
         get => (double)GetValue(BezelFractionProperty);
@@ -209,8 +211,9 @@ public sealed class RefractionEffect : ShaderEffect
     }
 
     // s0 = content being refracted; c0 = refraction strength (px); c1 = ddx/ddy of UV (WPF-filled: one
-    // device pixel in UV); c2 = blur sigma (px); c3 = blur axis; c10/c11 = corner/bezel as bar-height
-    // fractions. The rim field is computed ANALYTICALLY from a rounded-rect signed-distance field in
+    // device pixel in UV); c2 = blur sigma (px); c3 = blur axis; c10/c11 = corner/bezel as fractions
+    // of the bar's thickness (its SHORT side — height on a horizontal dock, width on a vertical one).
+    // The rim field is computed ANALYTICALLY from a rounded-rect signed-distance field in
     // pixel space (using ddxy → the bar's true pixel size), so the refraction follows the dock's actual
     // rounded rectangle with circular corners at any width — not the oval a stretched square map gave.
     //
@@ -230,8 +233,8 @@ float2 lightPos   : register(c6);   // UV position of the light (drives the rim 
 float  specInt    : register(c7);   // rim specular strength (0 = none); final pass only
 float  shininess  : register(c8);   // specular exponent (higher = tighter glint)
 float  rimSharp   : register(c9);   // radial concentration of the glint (higher = thinner border)
-float  cornerFrac : register(c10);  // corner radius as a fraction of the bar height
-float  bezelFrac  : register(c11);  // rim band width as a fraction of the bar height
+float  cornerFrac : register(c10);  // corner radius as a fraction of the bar thickness (short side)
+float  bezelFrac  : register(c11);  // rim band width as a fraction of the bar thickness (short side)
 
 // Analytic rounded-rectangle rim field in device-pixel space (aspect-correct). Returns the outward unit
 // normal in .xy and the refraction magnitude (0 across the flat centre → 1 at the rim) in .z.
@@ -239,7 +242,7 @@ float3 rimField(float2 uv)
 {
     float2 sizePx = float2(1.0 / ddxy.x, 1.0 / ddxy.w);
     float2 bb = sizePx * 0.5;
-    float h = sizePx.y;
+    float h = min(sizePx.x, sizePx.y); // bar thickness (short side) — orientation-independent
     float R = min(cornerFrac * h, min(bb.x, bb.y)); // circular corners, clamped to half the short side
     float W = max(bezelFrac * h, 1e-3);
 
@@ -295,8 +298,8 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     c.rgb = lerp(luma.xxx, c.rgb, saturation);
 
     // Rim specular: light the outward normal (n) where it faces lightPos, plus a second counter-glint
-    // from a bounce light point-reflected through the bar's centre (1 - lightPos, i.e. below the bar at
-    // the horizontally mirrored X) — so a glint on the top-left rim pairs with one on the bottom-right.
+    // from a bounce light point-reflected through the bar's centre (1 - lightPos) — so a glint on one
+    // rim pairs with one at the diametrically opposite spot, whatever the bar's orientation.
     // Both are added crisp on top of the blurred glass; the rim mask m (already 0→1) is raised to
     // rimSharp so the glints collapse to thin lines hugging the edge — like a glowing border.
     // specInt = 0 (the refraction pass) makes it a no-op.
