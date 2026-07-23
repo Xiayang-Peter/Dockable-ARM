@@ -8,6 +8,12 @@ on:
 
 jobs:
   build:
+    env:
+      Solution_Name: src/Dockable.sln
+      Test_Project_Path: src/Dockable.Tests/Dockable.Tests.csproj
+      Wap_Project_Directory: src/Dockable.Package
+      Wap_Project_Path: src/Dockable.Package/Dockable.Package.wapproj
+
 
     strategy:
       matrix:
