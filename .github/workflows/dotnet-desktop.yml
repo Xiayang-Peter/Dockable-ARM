@@ -1,0 +1,70 @@
+name: Dockable CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+
+    runs-on: windows-latest
+
+    env:
+      Solution_Name: Dockable.sln
+      Test_Project_Path: Dockable.Tests\Dockable.Tests.csproj
+      Wap_Project_Directory: Dockable.Package
+      Wap_Project_Path: Dockable.Package\Dockable.Package.wapproj
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install .NET 9 SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 9.0.x
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Run unit tests
+      run: dotnet test
+
+    - name: Restore solution
+      run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration
+      env:
+        Configuration: ${{ matrix.configuration }}
+
+    - name: Decode signing certificate
+      run: |
+        $bytes = [System.Convert]::FromBase64String("${{ secrets.Base64_Encoded_Pfx }}")
+        $certPath = Join-Path -Path $env:Wap_Project_Directory -ChildPath GitHubActionsWorkflow.pfx
+        [IO.File]::WriteAllBytes("$certPath", $bytes)
+
+    - name: Build MSIX package (ARM64 + x64 + x86)
+      run: msbuild $env:Wap_Project_Path `
+            /p:Configuration=$env:Configuration `
+            /p:UapAppxPackageBuildMode=StoreUpload `
+            /p:AppxBundle=Always `
+            /p:AppxBundle_Platforms="x86|x64|arm64" `
+            /p:PackageCertificateKeyFile=GitHubActionsWorkflow.pfx `
+            /p:PackageCertificatePassword=${{ secrets.Pfx_Key }}
+      env:
+        Configuration: ${{ matrix.configuration }}
+
+    - name: Remove certificate
+      run: Remove-Item -Path $env:Wap_Project_Directory\GitHubActionsWorkflow.pfx
+
+    - name: Upload MSIX artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Dockable-MSIX
+        path: ${{ env.Wap_Project_Directory }}\AppPackages
